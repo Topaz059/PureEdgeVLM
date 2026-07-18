@@ -1,0 +1,22 @@
+# ===== 模型权重（二进制大文件，不进版本库；本地磁盘已保留，不会丢）=====
+*.gguf
+*.pt
+app/src/main/assets/models/
+models_workspace/models/
+
+# ===== 第三方克隆仓库（自带 .git，避免嵌套仓库问题）=====
+models_workspace/ncnn-android-ppocrv5/
+
+# ===== 构建产物与缓存 =====
+build/
+app/build/
+app/.cxx/
+.gradle/
+.idea/
+
+# ===== 项目自动生成记忆 =====
+.workbuddy/
+
+# ===== Python 缓存 =====
+__pycache__/
+*.pyc
