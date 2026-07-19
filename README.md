@@ -1,16 +1,16 @@
 # PureEdgeVLM
 
-在手机（骁龙 865，8GB 内存）上跑的端侧多模态视觉系统：YOLOv11n 做物体检测 + MobileNetV3 做场景识别 + PP-OCRv5 做文字识别 + MiniCPM5-1B 做本地大模型对话。所有模型都在手机本地跑，不联网。
+在手机（骁龙 865，8GB 内存）上跑的端侧多模态视觉系统：YOLOv11n 做物体检测 + ResNet50 Places365 做场景识别 + PP-OCRv5 做文字识别 + MiniCPM5-1B 做本地大模型对话。所有模型都在手机本地跑，不联网。
 
 ## 本仓库包含什么
 
 - 安卓 App 源码（Android Studio Native C++ 模板）
-- 第 9 步的 Python 验证脚本：`models_workspace/test_yolo.py`、`test_ocr.py`、`test_llm.py`
+- 第 9 步的 Python 验证脚本：`models_workspace/test_yolo.py`、`test_ocr.py`、`test_llm.py`，以及 `models_workspace/places365/predict_places365.py`（场景识别）
 - 阶段一教程文档：`阶段一_环境搭建与模型转换_手把手教学.md` 等
 
 ## ⚠️ 本仓库【没有】模型权重文件
 
-模型文件总共约 1.3GB，太大，没有放进 git（用 `.gitignore` 排除了）。你需要按下面步骤自己下载 / 导出，再放进项目里，App 才能跑起来。
+模型文件总共约 700MB，太大，没有放进 git（用 `.gitignore` 排除了）。你需要按下面步骤自己下载 / 导出，再放进项目里，App 才能跑起来。
 
 没推上来的文件清单：
 
@@ -20,7 +20,7 @@
 | `PP_OCRv5_mobile_det.ncnn.param` + `.bin` | 约 2.3MB | OCR 检测 |
 | `PP_OCRv5_mobile_rec.ncnn.param` + `.bin` | 约 7.9MB | OCR 识别 |
 | `model.ncnn.param` + `.bin`（YOLOv11n） | 约 11MB | 物体检测 |
-| 场景识别 MobileNetV3 的 NCNN | —— | 阶段二再做，暂空 |
+| `resnet50_places365.pth.tar`（场景识别 ResNet50 Places365） | 约 97MB | 阶段二转 NCNN，暂空 |
 
 ## 怎么拿到这些文件
 
@@ -71,16 +71,16 @@ yolo export model=yolo11n.pt format=ncnn
 
 得到 `model.ncnn.param` + `model.ncnn.bin`，复制到 `app/src/main/assets/models/yolo/`。
 
-### 4) 场景识别（MobileNetV3 NCNN）—— 阶段二再做
+### 4) 场景识别（ResNet50 Places365），阶段二再做
 
-阶段一先用 torchvision 的 ImageNet 预训练权重在电脑上验证，手机端用的 NCNN 版本留到阶段二转换。所以 `app/src/main/assets/models/scene/` 暂时留空，不用放东西。
+阶段一下载 MIT 官方的 ResNet50 Places365 权重，用 `predict_places365.py` 在电脑上验证能输出 top5 场景就行，手机端用的 NCNN 版本留到阶段二转换。所以 `app/src/main/assets/models/scene/` 暂时留空，不用放东西。
 
 ## 最终的模型目录结构
 
 ```
 app/src/main/assets/models/
 ├── yolo/   (model.ncnn.param + model.ncnn.bin)
-├── scene/  (阶段二补，暂空)
+├── scene/  (ResNet50 Places365 的 NCNN，阶段二补，暂空)
 ├── ocr/    (PP_OCRv5_mobile_det.ncnn.param/.bin + PP_OCRv5_mobile_rec.ncnn.param/.bin)
 └── llm/    (MiniCPM5-1B-Q4_K_M.gguf)
 ```

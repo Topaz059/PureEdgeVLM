@@ -4,7 +4,7 @@
 from llama_cpp import Llama
 
 llm = Llama(
-    model_path="models/minicpm5/MiniCPM5-1B-Q4_K_M.gguf",  # 文件已恢复到 models_workspace/models/minicpm5/
+    model_path="C:/Users/Blue/Desktop/work/localai/app/src/main/assets/models/llm/MiniCPM5-1B-Q4_K_M.gguf",  # gguf 实际位置（绝对路径，避免找不到）
     n_ctx=512,
     n_threads=4,
     verbose=False,
