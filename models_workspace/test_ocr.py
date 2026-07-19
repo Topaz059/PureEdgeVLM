@@ -3,7 +3,7 @@
 # 运行：py -3.10 test_ocr.py
 from paddleocr import PaddleOCR
 
-ocr = PaddleOCR(use_angle_cls=True, lang="ch")
+ocr = PaddleOCR(use_textline_orientation=True, lang="ch")
 result = ocr.ocr("test.jpg", cls=True)
 
 print("OCR 结果：")

@@ -1,6 +1,7 @@
 # ===== 模型权重（二进制大文件，不进版本库；本地磁盘已保留，不会丢）=====
 *.gguf
 *.pt
+*.pth.tar
 app/src/main/assets/models/
 models_workspace/models/
 
