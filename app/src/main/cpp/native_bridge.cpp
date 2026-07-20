@@ -2,19 +2,28 @@
 #include <vector>
 #include <string>
 #include <chrono>
+#include <algorithm>
 #include <android/log.h>
 #include <android/asset_manager.h>
 #include <android/asset_manager_jni.h>
+#include <opencv2/core/core.hpp>
+#include <opencv2/imgproc/imgproc.hpp>
 #include "yolo_detector.h"
 #include "scene_classifier.h"
+#include "image_util.h"
+#include "ocr/ppocrv5.h"
+#include "ocr/ppocrv5_dict.h"
 
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, "YOLO", __VA_ARGS__)
 #define LOGS(...) __android_log_print(ANDROID_LOG_INFO, "SCENE", __VA_ARGS__)
+#define LOGO(...) __android_log_print(ANDROID_LOG_INFO, "OCR", __VA_ARGS__)
 
 static YoloDetector g_detector;
 static bool g_loaded = false;
 static SceneClassifier g_scene;
 static bool g_scene_loaded = false;
+static PPOCRv5 g_ocr;
+static bool g_ocr_loaded = false;
 static AAssetManager* g_am = nullptr;
 static std::string g_init_debug;   // 初始化（加载模型）的结果，长期保留
 static std::string g_detect_debug; // 最近一次检测的结果
@@ -80,6 +89,18 @@ Java_com_topaz_pureedgevlm_NativeBridge_nativeInit(JNIEnv* env, jclass, jobject 
     g_scene_loaded = (sCode == 0);
     LOGS("scene init: param=%zu bin=%zu load=%d",
           sparam.size(), sbin.size(), sCode);
+
+    // 顺带加载 OCR 模型（PP-OCRv5 mobile：det + rec）
+    // OCR 库自带从 AAssetManager 直接读取的 load 版本，路径相对 assets 根目录。
+    // mobile 模型用 fp16（与上游一致，更快、精度基本无损）；纯 CPU 不开 GPU。
+    int oCode = g_ocr.load(g_am,
+                           "models/ocr/PP_OCRv5_mobile_det.ncnn.param",
+                           "models/ocr/PP_OCRv5_mobile_det.ncnn.bin",
+                           "models/ocr/PP_OCRv5_mobile_rec.ncnn.param",
+                           "models/ocr/PP_OCRv5_mobile_rec.ncnn.bin",
+                           /*use_fp16=*/true, /*use_gpu=*/false);
+    g_ocr_loaded = (oCode == 0);
+    LOGO("ocr init: load=%d loaded=%d", oCode, g_ocr_loaded ? 1 : 0);
 }
 
 // YOLO 检测：返回 YoloBox 对象数组
@@ -146,6 +167,66 @@ Java_com_topaz_pureedgevlm_NativeBridge_sceneRecognize(JNIEnv* env, jclass, jobj
     }
     env->DeleteLocalRef(cls);
     return arr;
+}
+
+// OCR 文字识别：传 Bitmap，返回识别出的文字（多行文本框之间用换行拼接）
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_topaz_pureedgevlm_NativeBridge_ocrRecognize(JNIEnv* env, jclass, jobject bitmap) {
+    if (!g_ocr_loaded) {
+        LOGO("ocr: model not loaded");
+        return env->NewStringUTF("（OCR 模型未加载）");
+    }
+
+    // 1) 锁定 Bitmap 像素（Android ARGB_8888 内存序为 RGBA），转成 OpenCV 的 RGB Mat
+    int w = 0, h = 0;
+    unsigned char* pixels = lockBitmap(env, bitmap, &w, &h);
+    if (!pixels || w <= 0 || h <= 0) {
+        if (pixels) unlockBitmap(env, bitmap);
+        LOGO("ocr: lock bitmap failed w=%d h=%d", w, h);
+        return env->NewStringUTF("");
+    }
+    cv::Mat rgba(h, w, CV_8UC4, pixels);
+    cv::Mat rgb;
+    cv::cvtColor(rgba, rgb, cv::COLOR_RGBA2RGB);
+    unlockBitmap(env, bitmap);
+
+    // 2) 检测 + 识别
+    auto t0 = std::chrono::high_resolution_clock::now();
+    std::vector<Object> objects;
+    g_ocr.detect_and_recognize(rgb, objects);
+    auto t1 = std::chrono::high_resolution_clock::now();
+    float ocr_ms = std::chrono::duration<float, std::milli>(t1 - t0).count();
+
+    // 3) 按阅读顺序排序（上→下，同一行再左→右）。行容差取一个经验值。
+    std::sort(objects.begin(), objects.end(), [](const Object& a, const Object& b) {
+        float ay = a.rrect.center.y, by = b.rrect.center.y;
+        float tol = std::max(a.rrect.size.height, b.rrect.size.height) * 0.6f;
+        if (std::abs(ay - by) > tol) return ay < by;      // 不在同一行：按 y
+        return a.rrect.center.x < b.rrect.center.x;         // 同一行：按 x
+    });
+
+    // 4) 把每个文本框的字符 id 转成文字，框之间换行拼接
+    std::string result;
+    for (size_t i = 0; i < objects.size(); i++) {
+        std::string line;
+        const std::vector<Character>& chars = objects[i].text;
+        for (size_t j = 0; j < chars.size(); j++) {
+            int id = chars[j].id;
+            if (id < 0 || id >= character_dict_size) {
+                if (!line.empty() && line.back() != ' ') line += " ";
+                continue;
+            }
+            line += character_dict[id];
+        }
+        if (!line.empty()) {
+            if (!result.empty()) result += "\n";
+            result += line;
+        }
+    }
+
+    LOGO("ocr time=%.1f ms, boxes=%zu", ocr_ms, objects.size());
+    if (result.empty()) result = "（未识别到文字）";
+    return env->NewStringUTF(result.c_str());
 }
 
 // 返回初始化 + 检测两段调试信息，供 Kotlin 显示在界面上

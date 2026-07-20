@@ -15,6 +15,8 @@ object NativeBridge {
     external fun yoloDetect(bitmap: android.graphics.Bitmap, conf: Float, nms: Float): Array<YoloBox>
     // 场景识别：传 Bitmap，返回前 5 个场景（编号 + 概率）
     external fun sceneRecognize(bitmap: android.graphics.Bitmap): Array<SceneResult>
+    // OCR 文字识别：传 Bitmap，返回识别出的文字（多行文本框换行拼接）
+    external fun ocrRecognize(bitmap: android.graphics.Bitmap): String
     // 调试信息：返回最近一次检测的加载状态 / 最高分 / 框数
     external fun getDebug(): String
 

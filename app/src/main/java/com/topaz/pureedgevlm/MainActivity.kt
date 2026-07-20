@@ -35,7 +35,7 @@ class MainActivity : AppCompatActivity() {
         NativeBridge.init(this)
 
         btnPick = Button(this).apply { text = "选择图片" }
-        tvStatus = TextView(this).apply { text = "点按钮选一张图，看检测框 + 场景 Top5" }
+        tvStatus = TextView(this).apply { text = "点按钮选一张图，看检测框 + 场景 Top5 + OCR 文字" }
         imageView = ImageView(this)
 
         btnPick.setOnClickListener { pickImage.launch("image/*") }
@@ -50,13 +50,17 @@ class MainActivity : AppCompatActivity() {
         setContentView(layout)
     }
 
-    // 在后台线程同时跑 YOLO + 场景识别，免得界面卡住
+    // 在后台线程依次跑 YOLO + 场景识别 + OCR，免得界面卡住
     private fun runPipeline(bmp: Bitmap) {
         tvStatus.text = "推理中..."
         Thread {
-            val boxes = NativeBridge.yoloDetect(bmp, 0.2f, 0.45f)
-            val drawn = drawBoxes(bmp, boxes)
-            val scenes = NativeBridge.sceneRecognize(bmp)
+            // OCR 走 native 时要读像素，统一转成 ARGB_8888，避免格式不符导致读错颜色
+            val argb = if (bmp.config == Bitmap.Config.ARGB_8888) bmp
+                       else bmp.copy(Bitmap.Config.ARGB_8888, false)
+
+            val boxes = NativeBridge.yoloDetect(argb, 0.2f, 0.45f)
+            val drawn = drawBoxes(argb, boxes)
+            val scenes = NativeBridge.sceneRecognize(argb)
             val sceneText = if (scenes.isEmpty()) {
                 "（场景模型未加载）"
             } else {
@@ -65,9 +69,10 @@ class MainActivity : AppCompatActivity() {
                     "· $name  ${String.format(Locale.US, "%.1f%%", r.prob * 100)}"
                 }
             }
+            val ocrText = NativeBridge.ocrRecognize(argb)
             runOnUiThread {
                 imageView.setImageBitmap(drawn)
-                tvStatus.text = "检测到 ${boxes.size} 个物体\n场景 Top5:\n$sceneText"
+                tvStatus.text = "检测到 ${boxes.size} 个物体\n场景 Top5:\n$sceneText\n\nOCR 文字:\n$ocrText"
             }
         }.start()
     }
