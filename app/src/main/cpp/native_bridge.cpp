@@ -5,11 +5,15 @@
 #include <android/asset_manager.h>
 #include <android/asset_manager_jni.h>
 #include "yolo_detector.h"
+#include "scene_classifier.h"
 
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, "YOLO", __VA_ARGS__)
+#define LOGS(...) __android_log_print(ANDROID_LOG_INFO, "SCENE", __VA_ARGS__)
 
 static YoloDetector g_detector;
 static bool g_loaded = false;
+static SceneClassifier g_scene;
+static bool g_scene_loaded = false;
 static AAssetManager* g_am = nullptr;
 static std::string g_init_debug;   // 初始化（加载模型）的结果，长期保留
 static std::string g_detect_debug; // 最近一次检测的结果
@@ -61,6 +65,20 @@ Java_com_topaz_pureedgevlm_NativeBridge_nativeInit(JNIEnv* env, jclass, jobject 
     setInitDebug("init: param=" + std::to_string(param.size()) +
                  " bin=" + std::to_string(bin.size()) +
                  " load=" + loadMsg);
+
+    // 顺带加载场景识别模型（ResNet50 Places365，fp32 版）
+    auto sparam = readAsset("models/scene/resnet50_fp32.param");
+    auto sbin = readAsset("models/scene/resnet50_fp32.bin");
+    int sCode = 0;
+    if (sparam.empty() || sbin.empty()) {
+        sCode = -1;
+    } else {
+        sCode = g_scene.loadFromMemory(sparam.data(), sparam.size(),
+                                         sbin.data(), sbin.size());
+    }
+    g_scene_loaded = (sCode == 0);
+    LOGS("scene init: param=%zu bin=%zu load=%d",
+          sparam.size(), sbin.size(), sCode);
 }
 
 // YOLO 检测：返回 YoloBox 对象数组
@@ -90,6 +108,28 @@ Java_com_topaz_pureedgevlm_NativeBridge_yoloDetect(JNIEnv* env, jclass, jobject 
         jobject obj = env->NewObject(cls, ctor,
             boxes[i].x1, boxes[i].y1, boxes[i].x2, boxes[i].y2,
             boxes[i].label, boxes[i].score);
+        env->SetObjectArrayElement(arr, (jsize)i, obj);
+        env->DeleteLocalRef(obj);
+    }
+    env->DeleteLocalRef(cls);
+    return arr;
+}
+
+// 场景识别：返回 SceneResult 对象数组（前 5 个，按概率降序）
+extern "C" JNIEXPORT jobjectArray JNICALL
+Java_com_topaz_pureedgevlm_NativeBridge_sceneRecognize(JNIEnv* env, jclass, jobject bitmap) {
+    if (!g_scene_loaded) {
+        LOGS("scene: model not loaded");
+        jclass cls = env->FindClass("com/topaz/pureedgevlm/SceneResult");
+        return env->NewObjectArray(0, cls, nullptr);
+    }
+    std::vector<SceneTop> tops = g_scene.classify(env, bitmap, 5);
+
+    jclass cls = env->FindClass("com/topaz/pureedgevlm/SceneResult");
+    jmethodID ctor = env->GetMethodID(cls, "<init>", "(IF)V");
+    jobjectArray arr = env->NewObjectArray((jsize)tops.size(), cls, nullptr);
+    for (size_t i = 0; i < tops.size(); i++) {
+        jobject obj = env->NewObject(cls, ctor, tops[i].index, tops[i].prob);
         env->SetObjectArrayElement(arr, (jsize)i, obj);
         env->DeleteLocalRef(obj);
     }

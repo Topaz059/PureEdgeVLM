@@ -27,7 +27,7 @@ class MainActivity : AppCompatActivity() {
         uri ?: return@registerForActivityResult
         val bmp = BitmapFactory.decodeStream(contentResolver.openInputStream(uri))
         bmp ?: return@registerForActivityResult
-        runYolo(bmp)
+        runPipeline(bmp)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -35,7 +35,7 @@ class MainActivity : AppCompatActivity() {
         NativeBridge.init(this)
 
         btnPick = Button(this).apply { text = "选择图片" }
-        tvStatus = TextView(this).apply { text = "点按钮选一张图，看 YOLO 检测框" }
+        tvStatus = TextView(this).apply { text = "点按钮选一张图，看检测框 + 场景 Top5" }
         imageView = ImageView(this)
 
         btnPick.setOnClickListener { pickImage.launch("image/*") }
@@ -50,15 +50,24 @@ class MainActivity : AppCompatActivity() {
         setContentView(layout)
     }
 
-    // 在后台线程跑 YOLO，免得界面卡住
-    private fun runYolo(bmp: Bitmap) {
+    // 在后台线程同时跑 YOLO + 场景识别，免得界面卡住
+    private fun runPipeline(bmp: Bitmap) {
         tvStatus.text = "推理中..."
         Thread {
             val boxes = NativeBridge.yoloDetect(bmp, 0.2f, 0.45f)
             val drawn = drawBoxes(bmp, boxes)
+            val scenes = NativeBridge.sceneRecognize(bmp)
+            val sceneText = if (scenes.isEmpty()) {
+                "（场景模型未加载）"
+            } else {
+                scenes.joinToString("\n") { r ->
+                    val name = NativeBridge.sceneLabels.getOrElse(r.index) { "class${r.index}" }
+                    "· $name  ${String.format(Locale.US, "%.1f%%", r.prob * 100)}"
+                }
+            }
             runOnUiThread {
                 imageView.setImageBitmap(drawn)
-                tvStatus.text = "检测到 ${boxes.size} 个物体\n调试: ${NativeBridge.getDebug()}"
+                tvStatus.text = "检测到 ${boxes.size} 个物体\n场景 Top5:\n$sceneText"
             }
         }.start()
     }

@@ -7,7 +7,8 @@ set(NCNN_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/ncnn)
 add_library(${CMAKE_PROJECT_NAME} SHARED
         native_bridge.cpp
         image_util.cpp
-        yolo_detector.cpp)
+        yolo_detector.cpp
+        scene_classifier.cpp)
 
 # 引入 NCNN 头文件
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE

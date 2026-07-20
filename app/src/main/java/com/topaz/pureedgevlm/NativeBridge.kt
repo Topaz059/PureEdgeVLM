@@ -13,11 +13,31 @@ object NativeBridge {
     external fun nativeInit(assetManager: AssetManager)
     // YOLO 检测：传 Bitmap，返回检测框数组
     external fun yoloDetect(bitmap: android.graphics.Bitmap, conf: Float, nms: Float): Array<YoloBox>
+    // 场景识别：传 Bitmap，返回前 5 个场景（编号 + 概率）
+    external fun sceneRecognize(bitmap: android.graphics.Bitmap): Array<SceneResult>
     // 调试信息：返回最近一次检测的加载状态 / 最高分 / 框数
     external fun getDebug(): String
 
+    // 场景标签：365 行，每行格式 "场景名 编号"，读 assets 里的 categories_places365.txt
+    // 第 index 行（从 0 开始）就是编号 index 对应的场景名
+    var sceneLabels: List<String> = emptyList()
+        private set
+
     fun init(context: Context) {
         nativeInit(context.assets)
+        sceneLabels = loadSceneLabels(context)
+    }
+
+    // 从 assets 读场景标签文件，按行号存成列表
+    private fun loadSceneLabels(context: Context): List<String> {
+        val list = mutableListOf<String>()
+        context.assets.open("models/scene/categories_places365.txt").bufferedReader().useLines { lines ->
+            for (line in lines) {
+                val name = line.trim().substringBefore(' ')
+                if (name.isNotEmpty()) list.add(name)
+            }
+        }
+        return list
     }
 
     // COCO 80 类名称（YOLO 输出的编号对应这里）
