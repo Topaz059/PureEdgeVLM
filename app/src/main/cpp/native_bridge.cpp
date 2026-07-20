@@ -1,6 +1,7 @@
 #include <jni.h>
 #include <vector>
 #include <string>
+#include <chrono>
 #include <android/log.h>
 #include <android/asset_manager.h>
 #include <android/asset_manager_jni.h>
@@ -93,13 +94,19 @@ Java_com_topaz_pureedgevlm_NativeBridge_yoloDetect(JNIEnv* env, jclass, jobject 
     std::vector<YoloBox> boxes;
     float max_score = 0.0f;
     int max_label = -1;
+    float yolo_ms = 0.0f;
     if (g_loaded) {
+        auto t0 = std::chrono::high_resolution_clock::now();
         boxes = g_detector.detect(env, bitmap, conf, nms, &max_score, &max_label);
+        auto t1 = std::chrono::high_resolution_clock::now();
+        yolo_ms = std::chrono::duration<float, std::milli>(t1 - t0).count();
     }
     setDetectDebug(std::string("loaded=") + (g_loaded ? "1" : "0") +
                    " maxScore=" + std::to_string(max_score) +
                    " maxLabel=" + std::to_string(max_label) +
-                   " boxes=" + std::to_string(boxes.size()));
+                   " boxes=" + std::to_string(boxes.size()) +
+                   " time=" + std::to_string(yolo_ms) + "ms");
+    if (g_loaded) LOGI("yolo time=%.1f ms", yolo_ms);
 
     jclass cls = env->FindClass("com/topaz/pureedgevlm/YoloBox");
     jmethodID ctor = env->GetMethodID(cls, "<init>", "(FFFFIF)V");
@@ -123,7 +130,11 @@ Java_com_topaz_pureedgevlm_NativeBridge_sceneRecognize(JNIEnv* env, jclass, jobj
         jclass cls = env->FindClass("com/topaz/pureedgevlm/SceneResult");
         return env->NewObjectArray(0, cls, nullptr);
     }
+    auto t0 = std::chrono::high_resolution_clock::now();
     std::vector<SceneTop> tops = g_scene.classify(env, bitmap, 5);
+    auto t1 = std::chrono::high_resolution_clock::now();
+    float scene_ms = std::chrono::duration<float, std::milli>(t1 - t0).count();
+    LOGS("scene time=%.1f ms", scene_ms);
 
     jclass cls = env->FindClass("com/topaz/pureedgevlm/SceneResult");
     jmethodID ctor = env->GetMethodID(cls, "<init>", "(IF)V");
