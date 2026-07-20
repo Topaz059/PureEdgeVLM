@@ -4,6 +4,10 @@
 *.pth.tar
 app/src/main/assets/models/
 models_workspace/models/
+# places365 等转换产物：.bin / .onnx 均为 90+MB 模型权重，绝不入库；.param 为配套结构文件一并忽略
+models_workspace/**/*.bin
+models_workspace/**/*.onnx
+models_workspace/**/*.param
 
 # ===== 第三方克隆仓库（自带 .git，避免嵌套仓库问题）=====
 models_workspace/ncnn-android-ppocrv5/
