@@ -7,6 +7,31 @@
 #define LLM_LOGI(...) __android_log_print(ANDROID_LOG_INFO,  "LLM", __VA_ARGS__)
 #define LLM_LOGE(...) __android_log_print(ANDROID_LOG_ERROR, "LLM", __VA_ARGS__)
 
+// 计算字符串中"到最后一个完整 UTF-8 字符为止"的安全长度。
+// llama 每个词元解出的字节可能只是一个多字节字符（中文/emoji）的一部分，
+// 逐词元回传时必须在完整字符边界切分，否则半个字符送进 JNI 会崩。
+// 返回值：可安全发出的前缀字节数；剩下的（不完整字符）应留到下一次。
+static size_t utf8SafeLen(const std::string& s) {
+    size_t len = s.size();
+    if (len == 0) return 0;
+    // 从末尾往前，最多回看 4 字节找到某个 UTF-8 首字节
+    size_t i = len;
+    for (int back = 0; back < 4 && i > 0; back++) {
+        i--;
+        unsigned char c = (unsigned char)s[i];
+        if ((c & 0xC0) != 0x80) {           // 找到首字节（非 10xxxxxx 续字节）
+            size_t need;
+            if      ((c & 0x80) == 0x00) need = 1;   // 0xxxxxxx
+            else if ((c & 0xE0) == 0xC0) need = 2;   // 110xxxxx
+            else if ((c & 0xF0) == 0xE0) need = 3;   // 1110xxxx
+            else if ((c & 0xF8) == 0xF0) need = 4;   // 11110xxx
+            else need = 1;                            // 非法字节，当单字节避免死循环
+            return (i + need <= len) ? len : i;       // 末字符完整→全发；否则切在 i
+        }
+    }
+    return len;   // 未找到首字节（异常），全部放行
+}
+
 LlmEngine g_llm;
 
 LlmEngine::~LlmEngine() {
@@ -120,6 +145,7 @@ std::string LlmEngine::generate(const std::string& prompt, int maxTokens,
 
     const int32_t n_vocab = llama_vocab_n_tokens(vocab);
     std::string result;
+    std::string pending;           // UTF-8 缓冲：暂存尚未凑成完整字符的尾部字节
     llama_token prevToken = -1;
     int repeatCount = 0;
     int logitsIdx = nPrompt - 1;   // 第一批在末词取；之后每次单 token 取 index 0
@@ -143,7 +169,14 @@ std::string LlmEngine::generate(const std::string& prompt, int maxTokens,
         int n = llama_token_to_piece(vocab, next, pieceBuf, sizeof(pieceBuf), 0, false);
         if (n > 0) {
             result.append(pieceBuf, (size_t)n);
-            if (onToken) onToken(std::string(pieceBuf, (size_t)n));
+            // 逐词元回传前，先在 UTF-8 完整字符边界切分：完整部分发出，半个字符留到下次，
+            // 避免把不完整的中文/emoji 字节送进 JNI 造成崩溃
+            pending.append(pieceBuf, (size_t)n);
+            size_t safe = utf8SafeLen(pending);
+            if (safe > 0 && onToken) {
+                onToken(pending.substr(0, safe));
+                pending.erase(0, safe);
+            }
         }
         // 诊断：每 15 个 token 打一行进度，便于区分"慢"还是"真卡死"
         if (i % 15 == 0) {
@@ -167,6 +200,12 @@ std::string LlmEngine::generate(const std::string& prompt, int maxTokens,
         logitsIdx = 0;
         curPos++;
         genTok++;
+    }
+
+    // 循环结束后，若缓冲里还剩完整字符（正常结束一般为空），补发出去
+    if (!pending.empty() && onToken && utf8SafeLen(pending) == pending.size()) {
+        onToken(pending);
+        pending.clear();
     }
 
     llama_batch_free(batch);

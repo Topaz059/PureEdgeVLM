@@ -254,14 +254,19 @@ Java_com_topaz_pureedgevlm_NativeBridge_llmGenerate(
     // 从 callback 实例拿类（坑五：别写死类名，内部类带 $，FindClass 会找不到）
     jclass cbClass = env->GetObjectClass(callback);
     if (!cbClass) return;
-    jmethodID onToken = env->GetMethodID(cbClass, "onToken", "(Ljava/lang/String;)V");
+    // 回传用 byte[]（而非 String）：NewStringUTF 只认 Java 的 Modified UTF-8，
+    // 遇到标准 4 字节字符（如 emoji）会直接 abort 崩溃。改传原始 UTF-8 字节，
+    // 由 Kotlin 侧用 String(bytes, UTF-8) 正确解码。llm_engine 已保证只发完整字符。
+    jmethodID onToken = env->GetMethodID(cbClass, "onToken", "([B)V");
     if (!onToken) { env->DeleteLocalRef(cbClass); return; }
 
     auto* envPtr = env;
-    g_llm.generate(prompt, maxTokens, [envPtr, callback, cbClass, onToken](const std::string& piece) {
-        jstring js = envPtr->NewStringUTF(piece.c_str());
-        envPtr->CallVoidMethod(callback, onToken, js);
-        envPtr->DeleteLocalRef(js);
+    g_llm.generate(prompt, maxTokens, [envPtr, callback, onToken](const std::string& piece) {
+        jbyteArray arr = envPtr->NewByteArray((jsize)piece.size());
+        envPtr->SetByteArrayRegion(arr, 0, (jsize)piece.size(),
+                                   reinterpret_cast<const jbyte*>(piece.data()));
+        envPtr->CallVoidMethod(callback, onToken, arr);
+        envPtr->DeleteLocalRef(arr);
     });
     env->DeleteLocalRef(cbClass);
 }

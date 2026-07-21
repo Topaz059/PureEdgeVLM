@@ -5,8 +5,11 @@ import android.content.res.AssetManager
 import java.io.File
 
 // 大模型生成时的逐字回调（C++ 每解出一个片段就调一次 onToken）
+// 参数是原始 UTF-8 字节（C++ 已保证在完整字符边界切分）：
+// 用字节而非 String 是因为 JNI 的 NewStringUTF 不认 emoji 等 4 字节字符会崩，
+// 这里由 Kotlin 侧用 String(bytes, UTF-8) 自行解码。
 interface LlmCallback {
-    fun onToken(text: String)
+    fun onToken(bytes: ByteArray)
 }
 
 // 连接 C++ 的桥。object 单例，加载一次 native 库。
