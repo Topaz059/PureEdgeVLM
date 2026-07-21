@@ -81,7 +81,8 @@ std::string LlmEngine::generate(const std::string& prompt, int maxTokens,
 
     // 1) 每次生成新建上下文：天然清空 KV cache，免去 llama_memory_clear 调用
     struct llama_context_params cparams = llama_context_default_params();
-    cparams.n_ctx     = 1024;   // 对话场景足够；降低省内存与 prefill 开销
+    cparams.n_ctx     = 2048;   // 上下文窗口：提示词(含历史,~700 token) + 双段生成上限(1280，思考768+答案400) ≈ 1980，留余量取 2048；
+                                 // 若 KV 缓存吃紧可降回 1536 并同步把 MainActivity 的 maxTokens 改小（须满足 prompt+maxTokens ≤ n_ctx）
     cparams.n_threads = 4;     // 骁龙865 大核簇=4；超过会拉入小核反而拖慢
     cparams.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_DISABLED;
     struct llama_context* ctx = llama_init_from_model(model, cparams);
@@ -152,6 +153,13 @@ std::string LlmEngine::generate(const std::string& prompt, int maxTokens,
     int curPos = (int)nPrompt;
     int genTok = 0;                // 生成的词元计数（循环外统计，用于算速度）
 
+    // 双段软上限：思考与回答各占一块，保证答案一定能生成（防"说一半就停"）
+    const int MAX_THINK_TOKENS  = 768;   // 思考阶段最多生成的词元数（第三轮实测"你有什么功能"思考就超了 256，给 3 倍余量）
+    const int MAX_ANSWER_TOKENS = 400;   // 回答阶段最多生成的词元数（保证答案一定能拿到足额词元）
+    bool seenThinkEnd = false;           // 是否已遇到 </think>
+    int  thinkTok = 0;
+    int  answerTok = 0;
+
     for (int i = 0; i < maxTokens; i++) {
         float* logits = llama_get_logits_ith(ctx, logitsIdx);
         if (!logits) break;
@@ -188,6 +196,25 @@ std::string LlmEngine::generate(const std::string& prompt, int maxTokens,
         if (next == prevToken) { if (++repeatCount >= 8) break; }
         else repeatCount = 0;
         prevToken = next;
+
+        // —— 双段软上限状态机（防"说一半就停下"）——
+        // 每生成一个词元就推进本段计数：在模型吐出 </think> 之前算"腹稿（思考）"，
+        // 之后算"正式答案"。两段各有独立上限，保证答案段一定能拿到足额词元，
+        // 不会出现"腹稿把额度吃光、答案一个字都没吐就停"的情况。
+        if (!seenThinkEnd && result.find("</think>") != std::string::npos) {
+            seenThinkEnd = true;   // 模型自己写完了腹稿（出现 </think>），切到答案段
+        }
+        if (!seenThinkEnd) {
+            if (++thinkTok >= MAX_THINK_TOKENS) {
+                // 腹稿写太久了（超过上限）：强制切到答案段，好让答案一定有机会生成，
+                // 而不是耗在里面把整段额度吃完、最后答案啥都没有。
+                seenThinkEnd = true;
+            }
+        } else {
+            if (++answerTok >= MAX_ANSWER_TOKENS) {
+                break;             // 答案段写够了，主动收尾（防模型无限续写）
+            }
+        }
 
         // 把新词元喂回去，位置 +1
         batch.n_tokens     = 1;

@@ -32,7 +32,7 @@ class MainActivity : AppCompatActivity() {
     // 多轮对话历史：每条是 (是否用户发言, 文本)
     private val history = mutableListOf<Pair<Boolean, String>>()
 
-    // 历史占用的 token 预算上限（n_ctx=1024，留 256 给生成，再留些余量）
+    // 历史占用的 token 预算上限（按"字符≈token"故意高估；n_ctx=2048，生成上限 1280，留约 700 给提示词含历史）
     // 超出就丢最早的整轮对话，保证 prompt 不会撑爆上下文、prefill 不暴涨
     private val HISTORY_TOKEN_BUDGET = 600
 
@@ -159,7 +159,7 @@ class MainActivity : AppCompatActivity() {
             //    一旦出现 </think>，界面只显示正式回答（去掉开头空行）；存进历史的也只保留正式回答，
             //    下一轮才不会把思考内容又喂回模型（否则历史会再次膨胀）。
             val rawSb = StringBuilder()
-            NativeBridge.llmGenerate(prompt, 256, object : LlmCallback {
+            NativeBridge.llmGenerate(prompt, 1280, object : LlmCallback {
                 override fun onToken(bytes: ByteArray) {
                     // C++ 传回的是完整 UTF-8 字节，这里按 UTF-8 解码（emoji/中文都稳）
                     rawSb.append(String(bytes, Charsets.UTF_8))
