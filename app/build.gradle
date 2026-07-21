@@ -50,6 +50,11 @@ android {
     buildFeatures {
         viewBinding true
     }
+
+    // 阶段四：GGUF 大模型（约 0.5GB）不要压缩进安装包，直接原样打包
+    aaptOptions {
+        noCompress "gguf"
+    }
 }
 
 dependencies {

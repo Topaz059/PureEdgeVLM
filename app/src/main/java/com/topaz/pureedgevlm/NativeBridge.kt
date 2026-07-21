@@ -2,6 +2,12 @@ package com.topaz.pureedgevlm
 
 import android.content.Context
 import android.content.res.AssetManager
+import java.io.File
+
+// 大模型生成时的逐字回调（C++ 每解出一个片段就调一次 onToken）
+interface LlmCallback {
+    fun onToken(text: String)
+}
 
 // 连接 C++ 的桥。object 单例，加载一次 native 库。
 object NativeBridge {
@@ -20,6 +26,13 @@ object NativeBridge {
     // 调试信息：返回最近一次检测的加载状态 / 最高分 / 框数
     external fun getDebug(): String
 
+    // ===== 阶段四大模型接口 =====
+    // 从绝对路径加载 GGUF 模型，成功返回 true
+    external fun llmLoad(path: String): Boolean
+    // 生成：把 Kotlin 拼好的「完整 ChatML 多轮对话」prompt 喂给模型，
+    // 每出一个片段通过 callback.onToken 回传（打字机效果）
+    external fun llmGenerate(prompt: String, maxTokens: Int, callback: LlmCallback)
+
     // 场景标签：365 行，每行格式 "场景名 编号"，读 assets 里的 categories_places365.txt
     // 第 index 行（从 0 开始）就是编号 index 对应的场景名
     var sceneLabels: List<String> = emptyList()
@@ -28,6 +41,32 @@ object NativeBridge {
     fun init(context: Context) {
         nativeInit(context.assets)
         sceneLabels = loadSceneLabels(context)
+    }
+
+    // 首次使用时把 assets 里的大模型拷到内部存储再加载（分块流式，避免一次读 0.5GB 爆内存）。
+    // 之后复用缓存，不重复拷。返回是否加载成功。
+    private const val LLM_ASSET = "models/llm/MiniCPM5-1B-Q4_K_M.gguf"
+    private const val LLM_FILE  = "MiniCPM5-1B-Q4_K_M.gguf"
+    @Volatile private var llmReady = false
+
+    fun ensureLlmLoaded(context: Context): Boolean {
+        if (llmReady) return true
+        val dir = File(context.filesDir, "models/llm")
+        dir.mkdirs()
+        val out = File(dir, LLM_FILE)
+        if (!out.exists() || out.length() == 0L) {
+            context.assets.open(LLM_ASSET).use { input ->
+                out.outputStream().use { output ->
+                    val buf = ByteArray(1024 * 1024) // 1MB 一块
+                    var n: Int
+                    while (input.read(buf).also { n = it } != -1) {
+                        output.write(buf, 0, n)
+                    }
+                }
+            }
+        }
+        llmReady = llmLoad(out.absolutePath)
+        return llmReady
     }
 
     // 从 assets 读场景标签文件，按行号存成列表

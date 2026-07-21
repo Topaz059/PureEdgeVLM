@@ -11,6 +11,8 @@ models_workspace/**/*.param
 
 # ===== 第三方克隆仓库（自带 .git，避免嵌套仓库问题）=====
 models_workspace/ncnn-android-ppocrv5/
+# 端侧推理本地库（llama.cpp 源码克隆 + ncnn/opencv-mobile 预编译）：换机器须先就位，不进版本库
+app/src/main/cpp/third_party/
 
 # ===== 构建产物与缓存 =====
 build/
@@ -27,6 +29,7 @@ ncnn/
 PureEdgeVLM_端侧多模态系统实施方案.md
 阶段二_NCNN编译与单模型跑通_手把手教学.md
 阶段三_PP-OCRv5集成与文字识别_手把手教学.md
+阶段四_llama.cpp集成与本地对话_手把手教学.md
 PureEdgeVLM阶段一搭建记录.md
 notes.md
 

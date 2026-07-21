@@ -13,6 +13,7 @@
 #include "image_util.h"
 #include "ocr/ppocrv5.h"
 #include "ocr/ppocrv5_dict.h"
+#include "llm_engine.h"
 
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, "YOLO", __VA_ARGS__)
 #define LOGS(...) __android_log_print(ANDROID_LOG_INFO, "SCENE", __VA_ARGS__)
@@ -227,6 +228,42 @@ Java_com_topaz_pureedgevlm_NativeBridge_ocrRecognize(JNIEnv* env, jclass, jobjec
     LOGO("ocr time=%.1f ms, boxes=%zu", ocr_ms, objects.size());
     if (result.empty()) result = "（未识别到文字）";
     return env->NewStringUTF(result.c_str());
+}
+
+// ===== 阶段四：大模型 JNI 桥 =====
+
+// 从绝对路径加载 GGUF 模型
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_topaz_pureedgevlm_NativeBridge_llmLoad(JNIEnv* env, jobject, jstring jpath) {
+    const char* p = env->GetStringUTFChars(jpath, nullptr);
+    if (!p) return JNI_FALSE;
+    bool ok = g_llm.load(std::string(p));
+    env->ReleaseStringUTFChars(jpath, p);
+    return ok ? JNI_TRUE : JNI_FALSE;
+}
+
+// 生成：把中文指令喂给模型，每出一个片段通过 callback.onToken 回传（打字机效果）
+extern "C" JNIEXPORT void JNICALL
+Java_com_topaz_pureedgevlm_NativeBridge_llmGenerate(
+        JNIEnv* env, jobject, jstring jprompt, jint maxTokens, jobject callback) {
+    const char* p = env->GetStringUTFChars(jprompt, nullptr);
+    if (!p) return;
+    std::string prompt(p);
+    env->ReleaseStringUTFChars(jprompt, p);
+
+    // 从 callback 实例拿类（坑五：别写死类名，内部类带 $，FindClass 会找不到）
+    jclass cbClass = env->GetObjectClass(callback);
+    if (!cbClass) return;
+    jmethodID onToken = env->GetMethodID(cbClass, "onToken", "(Ljava/lang/String;)V");
+    if (!onToken) { env->DeleteLocalRef(cbClass); return; }
+
+    auto* envPtr = env;
+    g_llm.generate(prompt, maxTokens, [envPtr, callback, cbClass, onToken](const std::string& piece) {
+        jstring js = envPtr->NewStringUTF(piece.c_str());
+        envPtr->CallVoidMethod(callback, onToken, js);
+        envPtr->DeleteLocalRef(js);
+    });
+    env->DeleteLocalRef(cbClass);
 }
 
 // 返回初始化 + 检测两段调试信息，供 Kotlin 显示在界面上
