@@ -305,7 +305,7 @@ Java_com_topaz_pureedgevlm_NativeBridge_benchmarkRun(
     env->ReleaseStringUTFChars(jcsvPath, cp);
 
     int iters = (iterations > 0) ? (int)iterations : 10;
-    int llmIters = std::min(iters, 3);   // LLM 慢，限制每个线程设置的次数
+    int llmIters = std::min(iters, 10);  // LLM 慢，但仍保证足够采样次数（默认 iters=10）
     std::vector<int> threadsList = {1, 2, 4, 8};
 
     // 先确认 bitmap 有效（benchmark 需要真实像素）
