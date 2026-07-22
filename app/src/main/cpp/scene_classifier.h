@@ -15,6 +15,8 @@ public:
                        const unsigned char* bin_mem, size_t bin_len);
     // 对一张 Bitmap 做场景识别，返回概率最高的前 k 个（已做 softmax）
     std::vector<SceneTop> classify(JNIEnv* env, jobject bitmap, int topk = 5);
+    // 设置推理线程数（Benchmark 用），范围 1~8
+    void setNumThreads(int n) { if (n > 0) net.opt.num_threads = n; }
 private:
     ncnn::Net net;
     // NCNN 从内存加载模型时只是引用，不复制；所以自己把数据留着

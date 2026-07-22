@@ -36,6 +36,11 @@ object NativeBridge {
     // 每出一个片段通过 callback.onToken 回传（打字机效果）
     external fun llmGenerate(prompt: String, maxTokens: Int, callback: LlmCallback)
 
+    // ===== 阶段五 Benchmark =====
+    // 对四个模型按线程 1/2/4/8 各跑 iterations 次测速，结果写进 csvPath（CSV 文件）。
+    // 返回摘要文本（含 CSV 路径）。视觉三模型 + 大模型（若已加载）都会测。
+    external fun benchmarkRun(bitmap: android.graphics.Bitmap, csvPath: String, iterations: Int): String
+
     // 场景标签：365 行，每行格式 "场景名 编号"，读 assets 里的 categories_places365.txt
     // 第 index 行（从 0 开始）就是编号 index 对应的场景名
     var sceneLabels: List<String> = emptyList()

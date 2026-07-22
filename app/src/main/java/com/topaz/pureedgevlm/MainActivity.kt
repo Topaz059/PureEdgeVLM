@@ -21,8 +21,10 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnPick: Button
     private lateinit var btnSend: Button
     private lateinit var btnClear: Button
+    private lateinit var btnBench: Button
     private lateinit var etInput: EditText
     private lateinit var tvStatus: TextView
+    private lateinit var tvBench: TextView
     private lateinit var chatContainer: LinearLayout
     private lateinit var chatScroll: ScrollView
 
@@ -52,6 +54,11 @@ class MainActivity : AppCompatActivity() {
             text = "上方点「选择图片」跑视觉三模型；下方是与本地大模型（MiniCPM5）的纯文字多轮对话。"
         }
 
+        btnBench = Button(this).apply { text = "跑 Benchmark（测速，写 CSV）" }
+        tvBench = TextView(this).apply {
+            text = "点上面按钮：对 YOLO/场景/OCR/大模型 四个模型按线程 1/2/4/8 各跑若干次测速，结果存成 CSV。"
+        }
+
         val divider = TextView(this).apply { text = "———— 本地对话（MiniCPM5，纯文字多轮）————" }
 
         chatScroll = ScrollView(this)
@@ -78,6 +85,7 @@ class MainActivity : AppCompatActivity() {
         btnPick.setOnClickListener { if (!isBusy) pickImage.launch("image/*") }
         btnSend.setOnClickListener { if (!isBusy) sendMessage() }
         btnClear.setOnClickListener { if (!isBusy) clearChat() }
+        btnBench.setOnClickListener { if (!isBusy) runBenchmark() }
 
         val layout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -85,6 +93,8 @@ class MainActivity : AppCompatActivity() {
             addView(btnPick)
             addView(imageView)
             addView(tvStatus)
+            addView(btnBench)
+            addView(tvBench)
             addView(divider)
             // 对话区占满剩余空间，输入框固定底部
             addView(chatScroll, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
@@ -118,6 +128,40 @@ class MainActivity : AppCompatActivity() {
                 setBusy(false)
             }
         }.start()
+    }
+
+    // 阶段五：Benchmark。生成一张测试图（不依赖用户选图），在后台线程跑测速，
+    // 结果 CSV 写到外部存储（getExternalFilesDir），并把摘要回显到界面。
+    private fun runBenchmark() {
+        setBusy(true)
+        tvStatus.text = "Benchmark 中（大模型较慢，请稍候，别切走）..."
+        Thread {
+            val bmp = makeTestBitmap()
+            // 大模型若已就绪就一起测，否则只测视觉三模型（C++ 里会跳过未加载的 LLM）
+            NativeBridge.ensureLlmLoaded(this@MainActivity)
+            val dir = getExternalFilesDir(null) ?: filesDir
+            val csv = java.io.File(dir, "benchmark.csv").absolutePath
+            val summary = NativeBridge.benchmarkRun(bmp, csv, 10)
+            bmp.recycle()
+            runOnUiThread {
+                tvBench.text = "结果已保存到：\n$csv\n\n$summary\n\n可用电脑执行：python models_workspace/benchmark_to_markdown.py \"$csv\""
+                tvStatus.text = "Benchmark 完成。"
+                setBusy(false)
+            }
+        }.start()
+    }
+
+    // 生成一张带图形和文字的测试图（供 Benchmark 计时用，不要求识别正确）
+    private fun makeTestBitmap(): Bitmap {
+        val bmp = Bitmap.createBitmap(640, 480, Bitmap.Config.ARGB_8888)
+        val c = Canvas(bmp)
+        c.drawColor(Color.rgb(210, 210, 210))
+        val p = Paint().apply { style = Paint.Style.FILL }
+        p.color = Color.RED;  c.drawCircle(180f, 200f, 80f, p)
+        p.color = Color.BLUE; c.drawRect(300f, 250f, 460f, 420f, p)
+        p.color = Color.BLACK; p.textSize = 40f
+        c.drawText("PureEdgeVLM Benchmark", 40f, 90f, p)
+        return bmp
     }
 
     // 阶段四：纯文字多轮对话

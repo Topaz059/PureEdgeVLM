@@ -3,6 +3,7 @@
 #include <string>
 #include <chrono>
 #include <algorithm>
+#include <fstream>
 #include <android/log.h>
 #include <android/asset_manager.h>
 #include <android/asset_manager_jni.h>
@@ -285,4 +286,180 @@ Java_com_topaz_pureedgevlm_NativeBridge_getDebug(JNIEnv* env, jclass) {
         all += g_detect_debug;
     }
     return env->NewStringUTF(all.c_str());
+}
+
+// ===== 阶段五：Benchmark 测速 =====
+// 对四个模型按 threads ∈ {1,2,4,8} 各跑 iterations 次（首跑为 warmup 不计时），
+// 统计 avg/min/max 延迟并落盘 CSV。LLM 用固定短提示词 + 短 maxTokens 测速，
+// 且每个线程设置只跑 min(iterations,3) 次（LLM 慢，避免按 10 次跑太久）。
+// 另跑一次"完整视觉 pipeline"（yolo+scene+ocr，默认 4 线程）取平均。
+//
+// 注意：OCR（PP-OCRv5）内部用 OpenCV 全局线程 + OpenMP 并行，不响应 NCNN 的
+// num_threads，所以 OCR 只按"默认/自动"测一次，不扫线程。
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_topaz_pureedgevlm_NativeBridge_benchmarkRun(
+        JNIEnv* env, jclass, jobject bitmap, jstring jcsvPath, jint iterations) {
+    const char* cp = env->GetStringUTFChars(jcsvPath, nullptr);
+    if (!cp) return env->NewStringUTF("csv path null");
+    std::string csvPath(cp);
+    env->ReleaseStringUTFChars(jcsvPath, cp);
+
+    int iters = (iterations > 0) ? (int)iterations : 10;
+    int llmIters = std::min(iters, 3);   // LLM 慢，限制每个线程设置的次数
+    std::vector<int> threadsList = {1, 2, 4, 8};
+
+    // 先确认 bitmap 有效（benchmark 需要真实像素）
+    {
+        int w = 0, h = 0;
+        unsigned char* px = lockBitmap(env, bitmap, &w, &h);
+        if (!px || w <= 0 || h <= 0) {
+            if (px) unlockBitmap(env, bitmap);
+            return env->NewStringUTF("benchmark: invalid bitmap");
+        }
+        unlockBitmap(env, bitmap);
+    }
+
+    std::ofstream f(csvPath);
+    if (!f.is_open()) {
+        return env->NewStringUTF(("benchmark: cannot open csv " + csvPath).c_str());
+    }
+    f << "model,threads,runs,avg_ms,min_ms,max_ms,fps\n";
+
+    auto timeOne = [&](const std::function<void()>& fn) -> double {
+        auto t0 = std::chrono::high_resolution_clock::now();
+        fn();
+        auto t1 = std::chrono::high_resolution_clock::now();
+        return std::chrono::duration<double, std::milli>(t1 - t0).count();
+    };
+    auto writeRow = [&](const char* model, int t, int runs, double avg, double mn, double mx) {
+        f << model << "," << t << "," << runs << ","
+          << avg << "," << mn << "," << mx << "," << (1000.0 / avg) << "\n";
+    };
+
+    // 固定短提示词（中文），让 LLM 输出可控、测速稳定
+    const std::string llmPrompt =
+        "<|im_start|>system\n你是一个运行在手机上的本地智能助手，请用简洁的简体中文回答。<|im_end|>\n"
+        "<|im_start|>user\n用一句话介绍你自己。<|im_end|>\n"
+        "<|im_start|>assistant\n";
+
+    // ---- YOLO ----
+    for (int t : threadsList) {
+        g_detector.setNumThreads(t);
+        g_detector.detect(env, bitmap, 0.2f, 0.45f);  // warmup
+        double sum = 0, mn = 1e30, mx = 0;
+        for (int i = 0; i < iters; i++) {
+            double ms = timeOne([&]() { g_detector.detect(env, bitmap, 0.2f, 0.45f); });
+            sum += ms; mn = std::min(mn, ms); mx = std::max(mx, ms);
+        }
+        double avg = sum / iters;
+        writeRow("yolo", t, iters, avg, mn, mx);
+        LOGI("bench yolo t=%d avg=%.1f min=%.1f max=%.1f", t, avg, mn, mx);
+    }
+
+    // ---- Scene ----
+    for (int t : threadsList) {
+        g_scene.setNumThreads(t);
+        g_scene.classify(env, bitmap, 5);  // warmup
+        double sum = 0, mn = 1e30, mx = 0;
+        for (int i = 0; i < iters; i++) {
+            double ms = timeOne([&]() { g_scene.classify(env, bitmap, 5); });
+            sum += ms; mn = std::min(mn, ms); mx = std::max(mx, ms);
+        }
+        double avg = sum / iters;
+        writeRow("scene", t, iters, avg, mn, mx);
+        LOGS("bench scene t=%d avg=%.1f", t, avg);
+    }
+
+    // ---- OCR（默认/自动线程，只测一次）----
+    {
+        // warmup：先跑一次（OpenCV/OpenMP 首次有初始化开销）
+        {
+            int w = 0, h = 0;
+            unsigned char* pixels = lockBitmap(env, bitmap, &w, &h);
+            if (pixels) {
+                cv::Mat rgba(h, w, CV_8UC4, pixels);
+                cv::Mat rgb;
+                cv::cvtColor(rgba, rgb, cv::COLOR_RGBA2RGB);
+                unlockBitmap(env, bitmap);
+                std::vector<Object> objs;
+                g_ocr.detect_and_recognize(rgb, objs);
+            }
+        }
+        double sum = 0, mn = 1e30, mx = 0;
+        for (int i = 0; i < iters; i++) {
+            double ms = timeOne([&]() {
+                int w = 0, h = 0;
+                unsigned char* pixels = lockBitmap(env, bitmap, &w, &h);
+                if (!pixels) return;
+                cv::Mat rgba(h, w, CV_8UC4, pixels);
+                cv::Mat rgb;
+                cv::cvtColor(rgba, rgb, cv::COLOR_RGBA2RGB);
+                unlockBitmap(env, bitmap);
+                std::vector<Object> objs;
+                g_ocr.detect_and_recognize(rgb, objs);
+            });
+            sum += ms; mn = std::min(mn, ms); mx = std::max(mx, ms);
+        }
+        double avg = sum / iters;
+        writeRow("ocr", -1, iters, avg, mn, mx);  // threads=-1 表示"自动"
+        LOGO("bench ocr(auto) avg=%.1f", avg);
+    }
+
+    // ---- LLM（短输出，扫线程）----
+    std::string summary;
+    if (g_llm.isLoaded()) {
+        const int llmMax = 48;  // 短输出，控制单次测速时长
+        g_llm.setNumThreads(4);
+        g_llm.generate(llmPrompt, llmMax, [](const std::string&){});  // warmup
+        for (int t : threadsList) {
+            g_llm.setNumThreads(t);
+            double sum = 0, mn = 1e30, mx = 0;
+            for (int i = 0; i < llmIters; i++) {
+                double ms = timeOne([&]() {
+                    g_llm.generate(llmPrompt, llmMax, [](const std::string&){});
+                });
+                sum += ms; mn = std::min(mn, ms); mx = std::max(mx, ms);
+            }
+            double avg = sum / llmIters;
+            writeRow("llm", t, llmIters, avg, mn, mx);
+            LOGI("bench llm t=%d avg=%.1f", t, avg);
+        }
+    } else {
+        LOGI("bench: llm not loaded, skip");
+        summary = " (llm skipped: not loaded)";
+    }
+
+    // ---- 完整视觉 pipeline（默认 4 线程，跑 10 次取平均）----
+    {
+        int w = 0, h = 0;
+        unsigned char* px = lockBitmap(env, bitmap, &w, &h);
+        if (px && w > 0 && h > 0) {
+            unlockBitmap(env, bitmap);
+            double sum = 0, mn = 1e30, mx = 0;
+            int pruns = (iters >= 10) ? 10 : iters;
+            g_detector.setNumThreads(4); g_scene.setNumThreads(4);  // OCR 用默认/自动线程
+            for (int i = 0; i < pruns; i++) {
+                double ms = timeOne([&]() {
+                    g_detector.detect(env, bitmap, 0.2f, 0.45f);
+                    g_scene.classify(env, bitmap, 5);
+                    int ww = 0, hh = 0;
+                    unsigned char* pp = lockBitmap(env, bitmap, &ww, &hh);
+                    if (!pp) return;
+                    cv::Mat rgba(hh, ww, CV_8UC4, pp);
+                    cv::Mat rgb; cv::cvtColor(rgba, rgb, cv::COLOR_RGBA2RGB);
+                    unlockBitmap(env, bitmap);
+                    std::vector<Object> objs;
+                    g_ocr.detect_and_recognize(rgb, objs);
+                });
+                sum += ms; mn = std::min(mn, ms); mx = std::max(mx, ms);
+            }
+            double avg = sum / pruns;
+            writeRow("pipeline", 4, pruns, avg, mn, mx);
+            LOGI("bench pipeline avg=%.1f", avg);
+        }
+    }
+
+    f.close();
+    std::string msg = "benchmark done -> " + csvPath + summary;
+    return env->NewStringUTF(msg.c_str());
 }

@@ -24,10 +24,14 @@ public:
     std::string generate(const std::string& prompt, int maxTokens,
                         const std::function<void(const std::string&)>& onToken);
 
+    // 设置推理线程数（Benchmark 用），范围 1~8；默认 4（骁龙865 大核簇=4）
+    void setNumThreads(int n) { if (n > 0) n_threads = n; }
+
 private:
     struct llama_model*        model = nullptr;
     const struct llama_vocab*  vocab = nullptr;
     mutable std::mutex         mtx;
+    int                        n_threads = 4;
     bool                       loaded = false;
 };
 

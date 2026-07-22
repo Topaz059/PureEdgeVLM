@@ -83,7 +83,7 @@ std::string LlmEngine::generate(const std::string& prompt, int maxTokens,
     struct llama_context_params cparams = llama_context_default_params();
     cparams.n_ctx     = 2048;   // 上下文窗口：提示词(含历史,~700 token) + 双段生成上限(1280，思考768+答案400) ≈ 1980，留余量取 2048；
                                  // 若 KV 缓存吃紧可降回 1536 并同步把 MainActivity 的 maxTokens 改小（须满足 prompt+maxTokens ≤ n_ctx）
-    cparams.n_threads = 4;     // 骁龙865 大核簇=4；超过会拉入小核反而拖慢
+    cparams.n_threads = n_threads;     // 默认 4（骁龙865 大核簇=4）；Benchmark 会改变它
     cparams.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_DISABLED;
     struct llama_context* ctx = llama_init_from_model(model, cparams);
     if (!ctx) {

@@ -20,6 +20,8 @@ public:
                                 float conf_thresh, float nms_thresh,
                                 float* max_score_out = nullptr,
                                 int* max_label_out = nullptr);
+    // 设置推理线程数（Benchmark 用），范围 1~8
+    void setNumThreads(int n) { if (n > 0) net.opt.num_threads = n; }
 private:
     ncnn::Net net;
     // NCNN 从内存加载模型时，权重只是引用这块内存，不复制。
