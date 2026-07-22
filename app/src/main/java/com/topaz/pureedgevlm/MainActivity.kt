@@ -7,6 +7,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.drawable.GradientDrawable
+import android.content.Intent
 import android.os.Bundle
 import android.view.Gravity
 import android.widget.*
@@ -22,6 +23,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnSend: Button
     private lateinit var btnClear: Button
     private lateinit var btnBench: Button
+    private lateinit var btnCamera: Button
     private lateinit var etInput: EditText
     private lateinit var tvStatus: TextView
     private lateinit var tvBench: TextView
@@ -55,6 +57,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         btnBench = Button(this).apply { text = "跑 Benchmark（测速，写 CSV）" }
+        btnCamera = Button(this).apply { text = "相机实时检测" }
         tvBench = TextView(this).apply {
             text = "点上面按钮：对 YOLO/场景/OCR/大模型 四个模型按线程 1/2/4/8 各跑若干次测速，结果存成 CSV。"
         }
@@ -86,6 +89,7 @@ class MainActivity : AppCompatActivity() {
         btnSend.setOnClickListener { if (!isBusy) sendMessage() }
         btnClear.setOnClickListener { if (!isBusy) clearChat() }
         btnBench.setOnClickListener { if (!isBusy) runBenchmark() }
+        btnCamera.setOnClickListener { startActivity(Intent(this@MainActivity, CameraActivity::class.java)) }
 
         val layout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -94,6 +98,7 @@ class MainActivity : AppCompatActivity() {
             addView(imageView)
             addView(tvStatus)
             addView(btnBench)
+            addView(btnCamera)
             addView(tvBench)
             addView(divider)
             // 对话区占满剩余空间，输入框固定底部
