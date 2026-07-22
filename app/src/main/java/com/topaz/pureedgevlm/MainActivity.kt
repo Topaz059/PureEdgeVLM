@@ -9,6 +9,7 @@ import android.graphics.Paint
 import android.graphics.drawable.GradientDrawable
 import android.content.Intent
 import android.os.Bundle
+import android.util.Log
 import android.view.Gravity
 import android.widget.*
 import androidx.activity.result.contract.ActivityResultContracts
@@ -33,6 +34,9 @@ class MainActivity : AppCompatActivity() {
     // 防止「连点」导致并发调用大模型（阶段四稳定性要求）
     @Volatile private var isBusy = false
 
+    // 错误处理：Activity 销毁后不再更新 UI，避免崩溃
+    private var destroyed = false
+
     // 多轮对话历史：每条是 (是否用户发言, 文本)
     private val history = mutableListOf<Pair<Boolean, String>>()
 
@@ -42,8 +46,16 @@ class MainActivity : AppCompatActivity() {
 
     private val pickImage = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         uri ?: return@registerForActivityResult
-        val bmp = BitmapFactory.decodeStream(contentResolver.openInputStream(uri)) ?: return@registerForActivityResult
-        runPipeline(bmp)
+        try {
+            val bmp = BitmapFactory.decodeStream(contentResolver.openInputStream(uri))
+            if (!isBitmapValid(bmp)) {
+                Toast.makeText(this, "图片无法解码，换一张试试", Toast.LENGTH_SHORT).show()
+                return@registerForActivityResult
+            }
+            runPipeline(bmp)
+        } catch (e: Exception) {
+            Toast.makeText(this, "读取图片失败：${e.message}", Toast.LENGTH_SHORT).show()
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -106,6 +118,37 @@ class MainActivity : AppCompatActivity() {
             addView(inputRow)
         }
         setContentView(layout)
+        checkModelsOnStart()
+    }
+
+    override fun onDestroy() {
+        destroyed = true
+        super.onDestroy()
+    }
+
+    // UI 更新封装：Activity 销毁后跳过，避免更新已销毁的界面导致崩溃
+    private fun safeUi(block: () -> Unit) {
+        if (destroyed) return
+        runOnUiThread(block)
+    }
+
+    private fun isBitmapValid(bmp: Bitmap?): Boolean =
+        bmp != null && bmp.width > 0 && bmp.height > 0
+
+    // 启动时查一次各模型加载状态，缺模型在状态栏给明确提示（不阻断其它功能）
+    private fun checkModelsOnStart() {
+        try {
+            val status = NativeBridge.modelStatus()
+            // LLM 是按需加载，启动时未加载属于正常，不在此处提示
+            val missing = status.split(";").filter { it.endsWith("missing") }
+                .map { it.substringBefore("=") }
+                .filter { it != "llm" }
+            if (missing.isNotEmpty()) {
+                tvStatus.text = "⚠️ 部分模型未加载：${missing.joinToString(", ")}\n其它功能仍可正常使用。"
+            }
+        } catch (e: Exception) {
+            Log.w("MainActivity", "modelStatus 查询失败", e)
+        }
     }
 
     // 阶段二/三：YOLO + 场景 + OCR，结果画到图上并显示（与对话功能互不干扰）
@@ -113,24 +156,34 @@ class MainActivity : AppCompatActivity() {
         setBusy(true)
         tvStatus.text = "推理中..."
         Thread {
-            val argb = toArgb(bmp)
-            val boxes = NativeBridge.yoloDetect(argb, 0.2f, 0.45f)
-            val drawn = drawBoxes(argb, boxes)
-            val scenes = NativeBridge.sceneRecognize(argb)
-            val sceneText = if (scenes.isEmpty()) {
-                "（场景模型未加载）"
-            } else {
-                scenes.joinToString("；") { r ->
-                    val name = NativeBridge.sceneLabels.getOrElse(r.index) { "class${r.index}" }
-                    "$name ${String.format(Locale.US, "%.1f%%", r.prob * 100)}"
+            var argb: Bitmap? = null
+            try {
+                argb = toArgb(bmp)
+                val boxes = NativeBridge.yoloDetect(argb, 0.2f, 0.45f)
+                val drawn = drawBoxes(argb, boxes)
+                val scenes = NativeBridge.sceneRecognize(argb)
+                val sceneText = if (scenes.isEmpty()) {
+                    "（场景模型未加载）"
+                } else {
+                    scenes.joinToString("；") { r ->
+                        val name = NativeBridge.sceneLabels.getOrElse(r.index) { "class${r.index}" }
+                        "$name ${String.format(Locale.US, "%.1f%%", r.prob * 100)}"
+                    }
                 }
-            }
-            val ocrText = NativeBridge.ocrRecognize(argb)
-            if (argb != bmp) argb.recycle()
-            runOnUiThread {
-                imageView.setImageBitmap(drawn)
-                tvStatus.text = "检测到 ${boxes.size} 个物体\n场景 Top5:\n$sceneText\n\nOCR 文字:\n$ocrText"
-                setBusy(false)
+                val ocrText = NativeBridge.ocrRecognize(argb)
+                safeUi {
+                    imageView.setImageBitmap(drawn)
+                    tvStatus.text = "检测到 ${boxes.size} 个物体\n场景 Top5:\n$sceneText\n\nOCR 文字:\n$ocrText"
+                    setBusy(false)
+                }
+            } catch (e: Exception) {
+                Log.e("MainActivity", "视觉 pipeline 出错", e)
+                safeUi {
+                    tvStatus.text = "⚠️ 推理出错：${e.message}（详见 Logcat tag=MainActivity）"
+                    setBusy(false)
+                }
+            } finally {
+                if (argb != null && argb != bmp) argb.recycle()
             }
         }.start()
     }
@@ -141,17 +194,27 @@ class MainActivity : AppCompatActivity() {
         setBusy(true)
         tvStatus.text = "Benchmark 中（大模型较慢，请稍候，别切走）..."
         Thread {
-            val bmp = makeTestBitmap()
-            // 大模型若已就绪就一起测，否则只测视觉三模型（C++ 里会跳过未加载的 LLM）
-            NativeBridge.ensureLlmLoaded(this@MainActivity)
-            val dir = getExternalFilesDir(null) ?: filesDir
-            val csv = java.io.File(dir, "benchmark.csv").absolutePath
-            val summary = NativeBridge.benchmarkRun(bmp, csv, 10)
-            bmp.recycle()
-            runOnUiThread {
-                tvBench.text = "结果已保存到：\n$csv\n\n$summary\n\n可用电脑执行：python models_workspace/benchmark_to_markdown.py \"$csv\""
-                tvStatus.text = "Benchmark 完成。"
-                setBusy(false)
+            var bmp: Bitmap? = null
+            try {
+                bmp = makeTestBitmap()
+                // 大模型若已就绪就一起测，否则只测视觉三模型（C++ 里会跳过未加载的 LLM）
+                NativeBridge.ensureLlmLoaded(this@MainActivity)
+                val dir = getExternalFilesDir(null) ?: filesDir
+                val csv = java.io.File(dir, "benchmark.csv").absolutePath
+                val summary = NativeBridge.benchmarkRun(bmp, csv, 10)
+                safeUi {
+                    tvBench.text = "结果已保存到：\n$csv\n\n$summary\n\n可用电脑执行：python models_workspace/benchmark_to_markdown.py \"$csv\""
+                    tvStatus.text = "Benchmark 完成。"
+                    setBusy(false)
+                }
+            } catch (e: Exception) {
+                Log.e("MainActivity", "Benchmark 出错", e)
+                safeUi {
+                    tvStatus.text = "⚠️ Benchmark 出错：${e.message}（详见 Logcat tag=MainActivity）"
+                    setBusy(false)
+                }
+            } finally {
+                bmp?.recycle()
             }
         }.start()
     }
@@ -193,41 +256,48 @@ class MainActivity : AppCompatActivity() {
 
         setBusy(true)
         Thread {
-            // 3) 用 MiniCPM5 的 ChatML 模板拼成「完整多轮对话」再喂给模型
-            val prompt = buildChatPrompt(history)
-            if (!NativeBridge.ensureLlmLoaded(this@MainActivity)) {
-                runOnUiThread {
-                    aiBubble.text = "（大模型加载失败，请看 Logcat tag=LLM）"
+            try {
+                // 3) 用 MiniCPM5 的 ChatML 模板拼成「完整多轮对话」再喂给模型
+                val prompt = buildChatPrompt(history)
+                if (!NativeBridge.ensureLlmLoaded(this@MainActivity)) {
+                    safeUi {
+                        aiBubble.text = "（大模型加载失败，请看 Logcat tag=LLM）"
+                        setBusy(false)
+                    }
+                    return@Thread
+                }
+
+                // 4) 生成，逐字回调（打字机效果）
+                //    模型会吐 <think>...</think> 思考链：生成途中界面显示"思考过程"让用户能看着它想；
+                //    一旦出现 </think>，界面只显示正式回答（去掉开头空行）；存进历史的也只保留正式回答，
+                //    下一轮才不会把思考内容又喂回模型（否则历史会再次膨胀）。
+                val rawSb = StringBuilder()
+                NativeBridge.llmGenerate(prompt, 1280, object : LlmCallback {
+                    override fun onToken(bytes: ByteArray) {
+                        // C++ 传回的是完整 UTF-8 字节，这里按 UTF-8 解码（emoji/中文都稳）
+                        rawSb.append(String(bytes, Charsets.UTF_8))
+                        val display = displayFor(rawSb.toString())
+                        safeUi {
+                            aiBubble.text = display
+                            scrollChatToBottom()
+                        }
+                    }
+                })
+
+                // 5) 只把"正式回答"（剥离思考过程）存进历史，下一轮对话才能"记得上文"
+                val reply = displayFor(rawSb.toString()).trim()
+                safeUi {
+                    if (reply.isBlank()) aiBubble.text = "（模型未输出，请看 Logcat tag=LLM）"
                     setBusy(false)
                 }
-                return@Thread
-            }
-
-            // 4) 生成，逐字回调（打字机效果）
-            //    模型会吐 <think>...</think> 思考链：生成途中界面显示"思考过程"让用户能看着它想；
-            //    一旦出现 </think>，界面只显示正式回答（去掉开头空行）；存进历史的也只保留正式回答，
-            //    下一轮才不会把思考内容又喂回模型（否则历史会再次膨胀）。
-            val rawSb = StringBuilder()
-            NativeBridge.llmGenerate(prompt, 1280, object : LlmCallback {
-                override fun onToken(bytes: ByteArray) {
-                    // C++ 传回的是完整 UTF-8 字节，这里按 UTF-8 解码（emoji/中文都稳）
-                    rawSb.append(String(bytes, Charsets.UTF_8))
-                    val display = displayFor(rawSb.toString())
-                    runOnUiThread {
-                        aiBubble.text = display
-                        scrollChatToBottom()
-                    }
+                if (reply.isNotBlank()) history.add(false to reply)
+            } catch (e: Exception) {
+                Log.e("MainActivity", "对话生成出错", e)
+                safeUi {
+                    aiBubble.text = "⚠️ 对话出错：${e.message}（详见 Logcat tag=LLM）"
+                    setBusy(false)
                 }
-            })
-
-            // 只把"正式回答"（剥离思考过程）存进历史，下一轮才不会把思考内容又喂回模型
-            val reply = displayFor(rawSb.toString()).trim()
-            runOnUiThread {
-                if (reply.isBlank()) aiBubble.text = "（模型未输出，请看 Logcat tag=LLM）"
-                setBusy(false)
             }
-            // 5) 把模型回复加入历史，下一轮对话才能"记得上文"
-            if (reply.isNotBlank()) history.add(false to reply)
         }.start()
     }
 
@@ -316,7 +386,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun setBusy(b: Boolean) {
         isBusy = b
-        runOnUiThread {
+        safeUi {
             btnPick.isEnabled = !b
             btnSend.isEnabled = !b
             btnClear.isEnabled = !b

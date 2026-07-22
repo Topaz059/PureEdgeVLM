@@ -28,6 +28,8 @@ object NativeBridge {
     external fun ocrRecognize(bitmap: android.graphics.Bitmap): String
     // 调试信息：返回最近一次检测的加载状态 / 最高分 / 框数
     external fun getDebug(): String
+    // 各模型加载状态：返回 "yolo=ok;scene=ok;ocr=ok;llm=missing" 形式，供启动时检查并提示用户
+    external fun modelStatus(): String
 
     // ===== 阶段四大模型接口 =====
     // 从绝对路径加载 GGUF 模型，成功返回 true

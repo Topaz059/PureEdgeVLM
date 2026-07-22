@@ -288,6 +288,18 @@ Java_com_topaz_pureedgevlm_NativeBridge_getDebug(JNIEnv* env, jclass) {
     return env->NewStringUTF(all.c_str());
 }
 
+// 返回各模型加载状态，形如 "yolo=ok;scene=ok;ocr=ok;llm=missing"，
+// 供 Kotlin 启动时检查并提示用户（缺哪个模型就说哪个，不阻断其它功能）。
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_topaz_pureedgevlm_NativeBridge_modelStatus(JNIEnv* env, jclass) {
+    std::string s;
+    s += "yolo=";   s += g_loaded ? "ok" : "missing";
+    s += ";scene="; s += g_scene_loaded ? "ok" : "missing";
+    s += ";ocr=";   s += g_ocr_loaded ? "ok" : "missing";
+    s += ";llm=";   s += g_llm.isLoaded() ? "ok" : "missing";
+    return env->NewStringUTF(s.c_str());
+}
+
 // ===== 阶段五：Benchmark 测速 =====
 // 对四个模型按 threads ∈ {1,2,4,8} 各跑 iterations 次（首跑为 warmup 不计时），
 // 统计 avg/min/max 延迟并落盘 CSV。LLM 用固定短提示词 + 短 maxTokens 测速，
