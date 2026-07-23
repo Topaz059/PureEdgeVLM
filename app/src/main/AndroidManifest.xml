@@ -17,7 +17,8 @@
         android:theme="@style/Theme.PureEdgeVLM">
         <activity
             android:name=".MainActivity"
-            android:exported="true">
+            android:exported="true"
+            android:theme="@style/Theme.PureEdgeVLM.Splash">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
 

@@ -12,6 +12,7 @@ import android.view.Gravity
 import android.view.View
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 
 @SuppressLint("SetTextI18n")
 class MainActivity : AppCompatActivity() {
@@ -38,6 +39,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        installSplashScreen()  // 启动页：先显示蓝底相机图标，随后淡出到主界面
         NativeBridge.init(this)
 
         tvStatus = TextView(this).apply {

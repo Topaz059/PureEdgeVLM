@@ -63,6 +63,9 @@ dependencies {
     implementation libs.androidx.core.ktx
     implementation libs.material
 
+    // 启动页（SplashScreen 兼容库，支持到 API 21+）
+    implementation "androidx.core:core-splashscreen:1.0.1"
+
     // 阶段五：相机实时检测页（CameraX）
     implementation "androidx.camera:camera-core:1.4.1"
     implementation "androidx.camera:camera-camera2:1.4.1"
