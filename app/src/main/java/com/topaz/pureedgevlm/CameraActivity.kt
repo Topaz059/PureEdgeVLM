@@ -62,10 +62,19 @@ class CameraActivity : AppCompatActivity() {
         tvInfo = TextView(this).apply {
             setTextColor(Color.WHITE)
             text = "正在启动相机…"
-            setBackgroundColor(0x80000000.toInt()) // 半透明黑底，文字看得清
-            setPadding(24, 24, 24, 24)
+            background = roundBg(this@CameraActivity, 20f, 0x80000000.toInt()) // 半透明黑底圆角胶囊
+            setPadding(Gui.dp(this@CameraActivity, 14f).toInt(), Gui.dp(this@CameraActivity, 8f).toInt(),
+                Gui.dp(this@CameraActivity, 14f).toInt(), Gui.dp(this@CameraActivity, 8f).toInt())
         }
-        btnBack = Button(this).apply { text = "← 返回" }
+        btnBack = Button(this).apply {
+            text = "← 返回"
+            setAllCaps(false)
+            textSize = 13f
+            setTextColor(Color.WHITE)
+            background = roundBg(this@CameraActivity, 20f, 0x80000000.toInt()) // 半透明黑底圆角胶囊
+            setPadding(Gui.dp(this@CameraActivity, 14f).toInt(), Gui.dp(this@CameraActivity, 8f).toInt(),
+                Gui.dp(this@CameraActivity, 14f).toInt(), Gui.dp(this@CameraActivity, 8f).toInt())
+        }
         btnBack.setOnClickListener { finish() }
 
         // 用 FrameLayout 把预览、画框层、文字、按钮叠在一起

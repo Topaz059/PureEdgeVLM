@@ -11,10 +11,9 @@ import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
 
 // 阶段五：Benchmark 独立成「页」。
-// 做法：把原本 MainActivity 里的「跑 Benchmark」按钮 + 测速逻辑搬到这里，
-// 主界面、相机页、本页三个页通过底部导航栏（Nav.kt 的 buildBottomBar）互相切换。
 // 视觉三模型由 MainActivity 启动时已加载（同进程常驻），本页直接复用；
 // 大模型按需加载（ensureLlmLoaded），没加载过就在这里第一次加载。
+// 界面：顶部标题栏 + 说明卡片 + 蓝色「跑 Benchmark」按钮 + 等宽字结果卡片。
 @SuppressLint("SetTextI18n")
 class BenchmarkActivity : AppCompatActivity() {
 
@@ -30,23 +29,57 @@ class BenchmarkActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        tvInfo = TextView(this).apply {
-            text = "点「跑 Benchmark」：对 YOLO/场景/OCR/大模型 四个模型按线程 1/2/4/8 各跑若干次测速，并在 224/640/960 三种分辨率下重复，结果存成 CSV。"
-        }
-        btnRun = Button(this).apply { text = "跑 Benchmark（测速，写 CSV）" }
-        tvResult = TextView(this).apply { text = "" }
+        val topBar = appBar(this, "性能测试", "")
 
+        val (infoCard, info) = sectionCard(this, "说明")
+        tvInfo = info
+        tvInfo.text = "点下方按钮，对 YOLO / 场景 / OCR / 大模型 按线程 1·2·4·8 各跑若干次，并在 224·640·960 三种分辨率下重复。"
+
+        btnRun = primaryButton(this, "跑 Benchmark（测速，写 CSV）")
         btnRun.setOnClickListener { if (!isBusy) runBenchmark() }
+
+        val resultCard = card(this)
+        val resLabel = TextView(this).apply {
+            text = "结果摘要"
+            textSize = 11f
+            setTextColor(Gui.PRIMARY)
+            background = pillBg(this@BenchmarkActivity, Gui.PILL)
+            val p = Gui.dp(this@BenchmarkActivity, 4f).toInt()
+            setPadding(Gui.dp(this@BenchmarkActivity, 9f).toInt(), p, Gui.dp(this@BenchmarkActivity, 9f).toInt(), p)
+        }
+        tvResult = TextView(this).apply {
+            text = ""
+            textSize = 12f
+            setTextColor(Gui.TEXT)
+            typeface = android.graphics.Typeface.MONOSPACE
+            val p = Gui.dp(this@BenchmarkActivity, 8f).toInt()
+            setPadding(0, p, 0, 0)
+        }
+        resultCard.addView(resLabel)
+        resultCard.addView(tvResult)
+
+        val inner = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            val side = Gui.sideMarginPx(this@BenchmarkActivity)
+            setPadding(side, Gui.dp(this@BenchmarkActivity, 14f).toInt(), side, Gui.dp(this@BenchmarkActivity, 14f).toInt())
+        }
+        // 每个模块之间留 6dp 缝隙，不紧贴
+        addVertical(inner, infoCard, this@BenchmarkActivity, 6f)
+        addVertical(inner, btnRun, this@BenchmarkActivity, 6f)
+        addVertical(inner, resultCard, this@BenchmarkActivity, 6f)
+
+        // 内容放进 ScrollView，保证底部结果卡片不被截掉、可下拉查看
+        val scroll = ScrollView(this)
+        scroll.addView(inner, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
 
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(24, 24, 24, 24)
-            addView(tvInfo)
-            addView(btnRun)
-            addView(tvResult)
+            setBackgroundColor(Gui.BG)
+            addView(topBar)   // 顶部标题栏满宽，与对话页对齐
+            addView(scroll, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
         }
 
-        // 三页底部导航（当前页 = bench）
+        // 四页底部导航（当前页 = bench）
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         root.addView(content, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
         root.addView(buildBottomBar(this, "bench"))

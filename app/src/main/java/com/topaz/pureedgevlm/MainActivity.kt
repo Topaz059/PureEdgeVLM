@@ -18,7 +18,7 @@ import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 class MainActivity : AppCompatActivity() {
 
     private lateinit var btnSend: Button
-    private lateinit var btnClear: Button
+    private lateinit var btnClear: ImageView
     private lateinit var etInput: EditText
     private lateinit var tvStatus: TextView
     private lateinit var chatContainer: LinearLayout
@@ -42,48 +42,83 @@ class MainActivity : AppCompatActivity() {
         installSplashScreen()  // 启动页：先显示蓝底相机图标，随后淡出到主界面
         NativeBridge.init(this)
 
-        tvStatus = TextView(this).apply {
-            text = "与本地大模型（MiniCPM5）的纯文字多轮对话。底部可切到「识别 / 相机 / Benchmark」。"
-        }
+        // 顶部标题栏（功能名 + 一句说明）
+        val topBar = appBar(this, "本地对话", "")
 
-        val divider = TextView(this).apply { text = "———— 本地对话（MiniCPM5，纯文字多轮）————" }
+        // 模型缺失提示（平时隐藏，仅缺模型时显示一行小字）
+        tvStatus = TextView(this).apply {
+            textSize = 13f
+            setTextColor(0xFFE5484D.toInt())
+            visibility = View.GONE
+            val p = Gui.dp(this@MainActivity, 8f).toInt()
+            setPadding(Gui.dp(this@MainActivity, 18f).toInt(), p, Gui.dp(this@MainActivity, 18f).toInt(), 0)
+        }
 
         chatScroll = ScrollView(this)
         chatContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(8, 8, 8, 8)
+            setPadding(Gui.dp(this@MainActivity, 8f).toInt(), Gui.dp(this@MainActivity, 8f).toInt(),
+                Gui.dp(this@MainActivity, 8f).toInt(), Gui.dp(this@MainActivity, 8f).toInt())
         }
         chatScroll.addView(chatContainer)
 
+        // 输入框：圆角白底描边；比发送/清空键高一点（拉长）
         etInput = EditText(this).apply {
             hint = "输入想说的话…"
             maxLines = 4
+            minimumHeight = Gui.dp(this@MainActivity, 46f).toInt()
+            background = roundBg(this@MainActivity, 20f, Gui.SURFACE, Gui.BORDER)
+            setPadding(Gui.dp(this@MainActivity, 14f).toInt(), Gui.dp(this@MainActivity, 10f).toInt(),
+                Gui.dp(this@MainActivity, 14f).toInt(), Gui.dp(this@MainActivity, 10f).toInt())
         }
-        btnSend = Button(this).apply { text = "发送" }
-        btnClear = Button(this).apply { text = "清空" }
+        // 发送键：较小的蓝色文字按钮「发送」；清空键：圆形垃圾桶矢量图标
+        btnSend = primaryButton(this, "发送")
+        btnSend.textSize = 15f   // 字号保持15f不变（用户要求字号与按钮分开：字清晰、框另控）
+        btnSend.setIncludeFontPadding(false)   // 去掉字上下自带多余留白，框能贴字
+        btnSend.minimumHeight = 0   // 关键：覆盖主题默认minHeight，防止它锁死按钮高度；真正高度由下面固定layout_height决定
+        btnSend.setPadding(Gui.dp(this@MainActivity, 2f).toInt(), 0,
+            Gui.dp(this@MainActivity, 2f).toInt(), 0)   // 左右留2dp、上下贴边
+        val clearSize = (40 * resources.displayMetrics.density).toInt()
+        btnClear = ImageView(this).apply {
+            setImageResource(R.drawable.ic_trash)
+            scaleType = ImageView.ScaleType.CENTER_INSIDE
+            background = roundBg(this@MainActivity, 100f, 0xFFEDEDED.toInt(), null)
+            val p = (9 * resources.displayMetrics.density).toInt()
+            setPadding(p, p, p, p)
+        }
 
         val inputRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
+            setPadding(Gui.dp(this@MainActivity, 12f).toInt(), Gui.dp(this@MainActivity, 10f).toInt(),
+                Gui.dp(this@MainActivity, 12f).toInt(), Gui.dp(this@MainActivity, 12f).toInt())
             addView(etInput, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-            addView(btnSend)
-            addView(btnClear)
+            addView(btnSend, LinearLayout.LayoutParams(Gui.dp(this@MainActivity, 50f).toInt(), Gui.dp(this@MainActivity, 42f).toInt()).apply {
+                leftMargin = Gui.dp(this@MainActivity, 8f).toInt()
+                topMargin = -Gui.dp(this@MainActivity, 2f).toInt()    // 上下距离缩约15%：键比输入框矮~27dp，居中后上下各空~13.5dp，各推2dp出去→约11.5dp
+                bottomMargin = -Gui.dp(this@MainActivity, 2f).toInt()
+                gravity = Gravity.CENTER_VERTICAL
+            })   // 宽固定50dp(约原宽34的1.5倍/+50%)、高固定18dp(<字高22)：字15f清晰居中、上下微露蓝框，字号与框解耦
+            addView(btnClear, LinearLayout.LayoutParams(clearSize, clearSize).apply {
+                leftMargin = Gui.dp(this@MainActivity, 8f).toInt()
+                gravity = Gravity.CENTER_VERTICAL
+            })
         }
 
         btnSend.setOnClickListener { if (!isBusy) sendMessage() }
         btnClear.setOnClickListener { if (!isBusy) clearChat() }
 
-        val layout = LinearLayout(this).apply {
+        val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(24, 24, 24, 24)
+            setBackgroundColor(Gui.BG)
+            addView(topBar)
             addView(tvStatus)
-            addView(divider)
-            // 对话区占满剩余空间，输入框固定底部
+            // 对话区占满剩余空间，输入条固定底部
             addView(chatScroll, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
             addView(inputRow)
         }
-        // 四页底部导航（当前页 = 对话）；上面 layout 占满剩余空间，导航栏固定底部
+        // 四页底部导航（当前页 = 对话）；上面 content 占满剩余空间，导航栏固定底部
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        root.addView(layout, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
+        root.addView(content, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
         root.addView(buildBottomBar(this, "dialog"))
         setContentView(root)
         checkModelsOnStart()
@@ -109,6 +144,7 @@ class MainActivity : AppCompatActivity() {
                 .map { it.substringBefore("=") }
                 .filter { it != "llm" }
             if (missing.isNotEmpty()) {
+                tvStatus.visibility = View.VISIBLE
                 tvStatus.text = "⚠️ 部分模型未加载：${missing.joinToString(", ")}\n其它功能仍可正常使用。"
             }
         } catch (e: Exception) {
@@ -205,7 +241,7 @@ class MainActivity : AppCompatActivity() {
     // system 系统设定 + 每一轮 user/assistant + 末尾的 assistant 前缀（不含 <|im_end|>）。
     private fun buildChatPrompt(hist: List<Pair<Boolean, String>>): String {
         val sb = StringBuilder()
-        sb.append("<|im_start|>system\n你是一个运行在手机上的本地智能助手，请用简洁、自然的简体中文回答。<|im_end|>\n")
+        sb.append("<|im_start|>system\n你是运行在手机上的本地智能助手。我们现在是日常闲聊，不是考试也不是评测。请用轻松、口语化、简洁的简体中文回答，像朋友聊天一样自然；不要生硬地列要点，更不要说“你在测试我”之类的话。不要输出任何思考过程，不要使用 <think> 标签，直接给出最终回答。<|im_end|>\n")
         for ((isUser, t) in hist) {
             val role = if (isUser) "user" else "assistant"
             sb.append("<|im_start|>$role\n$t<|im_end|>\n")
@@ -241,26 +277,41 @@ class MainActivity : AppCompatActivity() {
         return t
     }
 
-    // 生成气泡的圆角灰/蓝底（用户与 AI 共用，便于统一风格）
+    // 生成气泡的圆角底（用户=品牌蓝、AI=浅灰；靠下那个角收小一点，做出"气泡尾巴"）
     private fun bubbleBg(isUser: Boolean): GradientDrawable {
+        val fill = if (isUser) Gui.PRIMARY else 0xFFEEF1F7.toInt()
         val gd = GradientDrawable()
-        gd.setColor(if (isUser) Color.parseColor("#3F7DFF") else Color.parseColor("#ECECEC"))
-        gd.cornerRadius = (12 * resources.displayMetrics.density)
+        gd.setColor(fill)
+        val r = Gui.dp(this@MainActivity, 16f)
+        val tail = Gui.dp(this@MainActivity, 5f)
+        gd.cornerRadii = if (isUser)
+            floatArrayOf(r, r, tail, tail, r, r, r, r)   // 用户：右下角小
+        else
+            floatArrayOf(r, r, r, r, r, r, tail, tail)   // AI：左下角小
         return gd
     }
 
-    // 生成一条对话气泡（用户=蓝底白字靠右，AI=灰底深字靠左），但不加入容器
+    // 生成一条对话气泡：用户=品牌蓝气泡靠右；AI=纯文本（无气泡底、左对齐，DeepSeek 风格）
     private fun makeBubble(isUser: Boolean): TextView {
         val tv = TextView(this)
-        val pad = (8 * resources.displayMetrics.density).toInt()
-        tv.setPadding(pad, pad, pad, pad)
-        tv.setTextColor(if (isUser) Color.WHITE else Color.DKGRAY)
-        tv.background = bubbleBg(isUser)
-        tv.gravity = if (isUser) Gravity.END else Gravity.START
+        val pad = (10 * resources.displayMetrics.density).toInt()
         val lp = LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
         lp.setMargins(0, 6, 0, 6)
-        lp.gravity = if (isUser) Gravity.END else Gravity.START
+        if (isUser) {
+            tv.setPadding(pad, pad, pad, pad)
+            tv.setTextColor(Color.WHITE)
+            tv.background = bubbleBg(true)   // 品牌蓝圆角气泡
+            tv.gravity = Gravity.END
+            lp.gravity = Gravity.END
+        } else {
+            // 大模型回复也用蓝色气泡，长相与右侧用户蓝气泡保持一致（仅左对齐区分）
+            tv.setPadding(pad, pad, pad, pad)
+            tv.setTextColor(Color.WHITE)
+            tv.background = bubbleBg(true)
+            tv.gravity = Gravity.START
+            lp.gravity = Gravity.START
+        }
         tv.layoutParams = lp
         return tv
     }

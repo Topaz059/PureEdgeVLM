@@ -2,19 +2,30 @@ package com.topaz.pureedgevlm
 
 import android.content.Context
 import android.content.Intent
-import android.widget.Button
+import android.graphics.Color
+import android.view.Gravity
 import android.widget.LinearLayout
+import android.widget.TextView
 
 // 四页底部导航栏：对话 / 识别 / 相机 / Benchmark
-// current 传当前页代号（"dialog" / "image" / "camera" / "bench"），对应按钮置灰并高亮成蓝色
+// 设计：纯文字（按需求保留文字、不做图标），选中项用「蓝色药丸底」高亮，其余灰字；
+//      顶部分割线 + 轻阴影，整体更精致。current 传当前页代号。
 fun buildBottomBar(ctx: Context, current: String): LinearLayout {
     val density = ctx.resources.displayMetrics.density
-    val barHeight = (56 * density).toInt()
+    val barHeight = (64 * density).toInt()
 
     val bar = LinearLayout(ctx).apply {
         orientation = LinearLayout.HORIZONTAL
-        setBackgroundColor(0xFFEDEDED.toInt())
+        setBackgroundColor(Gui.SURFACE)
+        // 顶部分割线：用 1px 细线视图，避免依赖阴影
     }
+    val line = android.view.View(ctx).apply {
+        setBackgroundColor(Gui.BORDER)
+    }
+    // 用一个外层垂直布局把「细线 + 按钮行」包起来
+    val wrap = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+    wrap.addView(line, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 1))
+
     val pages = listOf(
         "dialog" to "对话",
         "image"  to "识别",
@@ -22,14 +33,22 @@ fun buildBottomBar(ctx: Context, current: String): LinearLayout {
         "bench"  to "Benchmark"
     )
     for ((key, label) in pages) {
-        val btn = Button(ctx).apply {
+        val isCurrent = (key == current)
+        val tv = TextView(ctx).apply {
             text = label
-            textSize = 12f      // 英文缩小一号，避免折行
-            maxLines = 1        // 强制单行
-            setAllCaps(false)
-            if (key == current) {
-                isEnabled = false
-                setTextColor(0xFF3F7DFF.toInt())
+            textSize = 12f
+            maxLines = 1
+            gravity = Gravity.CENTER
+            if (isCurrent) {
+                setTextColor(Gui.PRIMARY)
+                paint.isFakeBoldText = true
+                background = pillBg(ctx, Gui.PILL)   // 蓝色药丸底包住当前项
+                val p = (6 * density).toInt()
+                setPadding((10 * density).toInt(), p, (10 * density).toInt(), p)
+            } else {
+                setTextColor(Gui.TEXT2)
+                setPadding((10 * density).toInt(), (6 * density).toInt(),
+                    (10 * density).toInt(), (6 * density).toInt())
             }
             setOnClickListener {
                 val target = when (key) {
@@ -44,7 +63,13 @@ fun buildBottomBar(ctx: Context, current: String): LinearLayout {
                 ctx.startActivity(intent)
             }
         }
-        bar.addView(btn, LinearLayout.LayoutParams(0, barHeight, 1f))
+        val itemLp = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+            gravity = Gravity.CENTER
+            topMargin = (10 * density).toInt()
+            bottomMargin = (10 * density).toInt()
+        }
+        bar.addView(tv, itemLp)
     }
-    return bar
+    wrap.addView(bar, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, barHeight))
+    return wrap
 }

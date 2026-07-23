@@ -14,15 +14,17 @@ import androidx.appcompat.app.AppCompatActivity
 import java.util.Locale
 
 // 阶段五：把「选择图片」视觉推理也独立成「页」。
-// 做法：原本混在对话页顶部的「选择图片」按钮 + YOLO/场景/OCR 推理逻辑搬到这里，
-// 和对话 / 相机 / Benchmark 一样通过底部导航栏（Nav.kt 的 buildBottomBar）互相切换。
 // 视觉三模型由启动时 NativeBridge.init() 加载（同进程常驻），本页直接复用。
+// 界面：顶部标题栏 + 图片卡片 + 蓝色「选择图片」按钮 + 检测/场景/OCR 三块分区卡片。
 @SuppressLint("SetTextI18n")
 class ImageActivity : AppCompatActivity() {
 
     private lateinit var imageView: ImageView
     private lateinit var btnPick: Button
     private lateinit var tvStatus: TextView
+    private lateinit var detTv: TextView
+    private lateinit var sceneTv: TextView
+    private lateinit var ocrTv: TextView
 
     // 防止连点导致并发推理
     @Volatile private var isBusy = false
@@ -47,23 +49,63 @@ class ImageActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         NativeBridge.init(this)
 
-        btnPick = Button(this).apply { text = "选择图片（检测/场景/OCR）" }
-        imageView = ImageView(this)
+        val topBar = appBar(this, "视觉识别", "")
+
         tvStatus = TextView(this).apply {
-            text = "点「选择图片」跑视觉三模型：YOLO 物体检测 + 场景识别 + 文字识别（OCR），结果画在图上并列出。"
+            textSize = 13f
+            setTextColor(Gui.TEXT2)
+            val p = Gui.dp(this@ImageActivity, 4f).toInt()
+            setPadding(0, p, 0, p)
         }
 
+        // 图片卡片：圆角裁切的 ImageView
+        imageView = ImageView(this).apply {
+            scaleType = ImageView.ScaleType.CENTER_CROP
+            background = roundBg(this@ImageActivity, 12f, 0xFFEEF1F7.toInt())
+            clipToOutline = true
+            minimumHeight = Gui.dp(this@ImageActivity, 180f).toInt()
+        }
+        val imageCard = card(this).apply {
+            addView(imageView, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT))
+        }
+
+        btnPick = primaryButton(this, "选择图片（检测 / 场景 / OCR）")
         btnPick.setOnClickListener { if (!isBusy) pickImage.launch("image/*") }
+
+        val (detCard, det) = sectionCard(this, "物体检测")
+        val (sceneCard, scene) = sectionCard(this, "场景 Top5")
+        val (ocrCard, ocr) = sectionCard(this, "OCR 文字")
+        detTv = det; sceneTv = scene; ocrTv = ocr
+        detTv.text = "（未识别）"
+        sceneTv.text = "（未识别）"
+        ocrTv.text = "（未识别）"
+
+        val inner = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            val side = Gui.sideMarginPx(this@ImageActivity)
+            setPadding(side, Gui.dp(this@ImageActivity, 14f).toInt(), side, Gui.dp(this@ImageActivity, 14f).toInt())
+        }
+        // 每个模块之间留 6dp 缝隙，不紧贴
+        addVertical(inner, tvStatus, this@ImageActivity, 6f)
+        addVertical(inner, imageCard, this@ImageActivity, 6f)
+        addVertical(inner, btnPick, this@ImageActivity, 6f)
+        addVertical(inner, detCard, this@ImageActivity, 6f)
+        addVertical(inner, sceneCard, this@ImageActivity, 6f)
+        addVertical(inner, ocrCard, this@ImageActivity, 6f)
+
+        // 内容放进 ScrollView，保证底部 OCR 卡片不被截掉、可下拉查看
+        val scroll = ScrollView(this)
+        scroll.addView(inner, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
 
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(24, 24, 24, 24)
-            addView(btnPick)
-            addView(imageView)
-            addView(tvStatus)
+            setBackgroundColor(Gui.BG)
+            addView(topBar)   // 顶部标题栏满宽，与对话页对齐
+            addView(scroll, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
         }
 
-        // 四页底部导航（当前页 = 识别）；上面 content 占满剩余空间，导航栏固定底部
+        // 四页底部导航（当前页 = 识别）
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         root.addView(content, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
         root.addView(buildBottomBar(this, "image"))
@@ -89,10 +131,10 @@ class ImageActivity : AppCompatActivity() {
         safeUi { btnPick.isEnabled = !b }
     }
 
-    // 阶段二/三：YOLO + 场景 + OCR，结果画到图上并显示
+    // 阶段二/三：YOLO + 场景 + OCR，结果分别写进三块分区卡片
     private fun runPipeline(bmp: Bitmap) {
         setBusy(true)
-        tvStatus.text = "推理中..."
+        tvStatus.text = "推理中…"
         Thread {
             var argb: Bitmap? = null
             try {
@@ -109,9 +151,17 @@ class ImageActivity : AppCompatActivity() {
                     }
                 }
                 val ocrText = NativeBridge.ocrRecognize(argb)
+                val detText = if (boxes.isEmpty()) "（未检测到物体）" else
+                    boxes.joinToString(" · ") { b ->
+                        val name = NativeBridge.cocoLabels.getOrElse(b.label) { "class${b.label}" }
+                        "$name ${String.format(Locale.US, "%.2f", b.score)}"
+                    }
                 safeUi {
                     imageView.setImageBitmap(drawn)
-                    tvStatus.text = "检测到 ${boxes.size} 个物体\n场景 Top5:\n$sceneText\n\nOCR 文字:\n$ocrText"
+                    detTv.text = detText
+                    sceneTv.text = sceneText
+                    ocrTv.text = if (ocrText.isBlank()) "未识别到文字" else ocrText
+                    tvStatus.text = "识别完成（检测到 ${boxes.size} 个物体）"
                     setBusy(false)
                 }
             } catch (e: Exception) {
