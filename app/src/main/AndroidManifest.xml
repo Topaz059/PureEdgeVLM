@@ -24,9 +24,17 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-        <!-- 阶段五：相机实时检测页（从主界面跳转进入） -->
+        <!-- 阶段五：相机实时检测页（从底部导航进入） -->
         <activity
             android:name=".CameraActivity"
+            android:exported="false" />
+        <!-- 阶段五：Benchmark 独立成页（从底部导航进入） -->
+        <activity
+            android:name=".BenchmarkActivity"
+            android:exported="false" />
+        <!-- 阶段五：选择图片视觉推理页（底部导航进入） -->
+        <activity
+            android:name=".ImageActivity"
             android:exported="false" />
     </application>
 

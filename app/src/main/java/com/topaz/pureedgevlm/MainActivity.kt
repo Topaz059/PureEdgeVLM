@@ -1,33 +1,21 @@
 package com.topaz.pureedgevlm
 
 import android.annotation.SuppressLint
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.graphics.Canvas
 import android.graphics.Color
-import android.graphics.Paint
 import android.graphics.drawable.GradientDrawable
-import android.content.Intent
 import android.os.Bundle
 import android.util.Log
 import android.view.Gravity
 import android.widget.*
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
-import java.util.Locale
 
 @SuppressLint("SetTextI18n")
 class MainActivity : AppCompatActivity() {
 
-    private lateinit var imageView: ImageView
-    private lateinit var btnPick: Button
     private lateinit var btnSend: Button
     private lateinit var btnClear: Button
-    private lateinit var btnBench: Button
-    private lateinit var btnCamera: Button
     private lateinit var etInput: EditText
     private lateinit var tvStatus: TextView
-    private lateinit var tvBench: TextView
     private lateinit var chatContainer: LinearLayout
     private lateinit var chatScroll: ScrollView
 
@@ -44,34 +32,12 @@ class MainActivity : AppCompatActivity() {
     // 超出就丢最早的整轮对话，保证 prompt 不会撑爆上下文、prefill 不暴涨
     private val HISTORY_TOKEN_BUDGET = 600
 
-    private val pickImage = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        uri ?: return@registerForActivityResult
-        try {
-            val bmp = BitmapFactory.decodeStream(contentResolver.openInputStream(uri))
-            if (!isBitmapValid(bmp)) {
-                Toast.makeText(this, "图片无法解码，换一张试试", Toast.LENGTH_SHORT).show()
-                return@registerForActivityResult
-            }
-            runPipeline(bmp)
-        } catch (e: Exception) {
-            Toast.makeText(this, "读取图片失败：${e.message}", Toast.LENGTH_SHORT).show()
-        }
-    }
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         NativeBridge.init(this)
 
-        btnPick = Button(this).apply { text = "选择图片（检测/场景/OCR）" }
-        imageView = ImageView(this)
         tvStatus = TextView(this).apply {
-            text = "上方点「选择图片」跑视觉三模型；下方是与本地大模型（MiniCPM5）的纯文字多轮对话。"
-        }
-
-        btnBench = Button(this).apply { text = "跑 Benchmark（测速，写 CSV）" }
-        btnCamera = Button(this).apply { text = "相机实时检测" }
-        tvBench = TextView(this).apply {
-            text = "点上面按钮：对 YOLO/场景/OCR/大模型 四个模型按线程 1/2/4/8 各跑若干次测速，结果存成 CSV。"
+            text = "与本地大模型（MiniCPM5）的纯文字多轮对话。底部可切到「识别 / 相机 / Benchmark」。"
         }
 
         val divider = TextView(this).apply { text = "———— 本地对话（MiniCPM5，纯文字多轮）————" }
@@ -97,27 +63,23 @@ class MainActivity : AppCompatActivity() {
             addView(btnClear)
         }
 
-        btnPick.setOnClickListener { if (!isBusy) pickImage.launch("image/*") }
         btnSend.setOnClickListener { if (!isBusy) sendMessage() }
         btnClear.setOnClickListener { if (!isBusy) clearChat() }
-        btnBench.setOnClickListener { if (!isBusy) runBenchmark() }
-        btnCamera.setOnClickListener { startActivity(Intent(this@MainActivity, CameraActivity::class.java)) }
 
         val layout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(24, 24, 24, 24)
-            addView(btnPick)
-            addView(imageView)
             addView(tvStatus)
-            addView(btnBench)
-            addView(btnCamera)
-            addView(tvBench)
             addView(divider)
             // 对话区占满剩余空间，输入框固定底部
             addView(chatScroll, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
             addView(inputRow)
         }
-        setContentView(layout)
+        // 四页底部导航（当前页 = 对话）；上面 layout 占满剩余空间，导航栏固定底部
+        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        root.addView(layout, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
+        root.addView(buildBottomBar(this, "dialog"))
+        setContentView(root)
         checkModelsOnStart()
     }
 
@@ -131,9 +93,6 @@ class MainActivity : AppCompatActivity() {
         if (destroyed) return
         runOnUiThread(block)
     }
-
-    private fun isBitmapValid(bmp: Bitmap?): Boolean =
-        bmp != null && bmp.width > 0 && bmp.height > 0
 
     // 启动时查一次各模型加载状态，缺模型在状态栏给明确提示（不阻断其它功能）
     private fun checkModelsOnStart() {
@@ -149,87 +108,6 @@ class MainActivity : AppCompatActivity() {
         } catch (e: Exception) {
             Log.w("MainActivity", "modelStatus 查询失败", e)
         }
-    }
-
-    // 阶段二/三：YOLO + 场景 + OCR，结果画到图上并显示（与对话功能互不干扰）
-    private fun runPipeline(bmp: Bitmap) {
-        setBusy(true)
-        tvStatus.text = "推理中..."
-        Thread {
-            var argb: Bitmap? = null
-            try {
-                argb = toArgb(bmp)
-                val boxes = NativeBridge.yoloDetect(argb, 0.2f, 0.45f)
-                val drawn = drawBoxes(argb, boxes)
-                val scenes = NativeBridge.sceneRecognize(argb)
-                val sceneText = if (scenes.isEmpty()) {
-                    "（场景模型未加载）"
-                } else {
-                    scenes.joinToString("；") { r ->
-                        val name = NativeBridge.sceneLabels.getOrElse(r.index) { "class${r.index}" }
-                        "$name ${String.format(Locale.US, "%.1f%%", r.prob * 100)}"
-                    }
-                }
-                val ocrText = NativeBridge.ocrRecognize(argb)
-                safeUi {
-                    imageView.setImageBitmap(drawn)
-                    tvStatus.text = "检测到 ${boxes.size} 个物体\n场景 Top5:\n$sceneText\n\nOCR 文字:\n$ocrText"
-                    setBusy(false)
-                }
-            } catch (e: Exception) {
-                Log.e("MainActivity", "视觉 pipeline 出错", e)
-                safeUi {
-                    tvStatus.text = "⚠️ 推理出错：${e.message}（详见 Logcat tag=MainActivity）"
-                    setBusy(false)
-                }
-            } finally {
-                if (argb != null && argb != bmp) argb.recycle()
-            }
-        }.start()
-    }
-
-    // 阶段五：Benchmark。生成一张测试图（不依赖用户选图），在后台线程跑测速，
-    // 结果 CSV 写到外部存储（getExternalFilesDir），并把摘要回显到界面。
-    private fun runBenchmark() {
-        setBusy(true)
-        tvStatus.text = "Benchmark 中（大模型较慢，请稍候，别切走）..."
-        Thread {
-            var bmp: Bitmap? = null
-            try {
-                bmp = makeTestBitmap()
-                // 大模型若已就绪就一起测，否则只测视觉三模型（C++ 里会跳过未加载的 LLM）
-                NativeBridge.ensureLlmLoaded(this@MainActivity)
-                val dir = getExternalFilesDir(null) ?: filesDir
-                val csv = java.io.File(dir, "benchmark.csv").absolutePath
-                val summary = NativeBridge.benchmarkRun(bmp, csv, 10)
-                safeUi {
-                    tvBench.text = "结果已保存到：\n$csv\n\n$summary\n\n可用电脑执行：python models_workspace/benchmark_to_markdown.py \"$csv\""
-                    tvStatus.text = "Benchmark 完成。"
-                    setBusy(false)
-                }
-            } catch (e: Exception) {
-                Log.e("MainActivity", "Benchmark 出错", e)
-                safeUi {
-                    tvStatus.text = "⚠️ Benchmark 出错：${e.message}（详见 Logcat tag=MainActivity）"
-                    setBusy(false)
-                }
-            } finally {
-                bmp?.recycle()
-            }
-        }.start()
-    }
-
-    // 生成一张带图形和文字的测试图（供 Benchmark 计时用，不要求识别正确）
-    private fun makeTestBitmap(): Bitmap {
-        val bmp = Bitmap.createBitmap(640, 480, Bitmap.Config.ARGB_8888)
-        val c = Canvas(bmp)
-        c.drawColor(Color.rgb(210, 210, 210))
-        val p = Paint().apply { style = Paint.Style.FILL }
-        p.color = Color.RED;  c.drawCircle(180f, 200f, 80f, p)
-        p.color = Color.BLUE; c.drawRect(300f, 250f, 460f, 420f, p)
-        p.color = Color.BLACK; p.textSize = 40f
-        c.drawText("PureEdgeVLM Benchmark", 40f, 90f, p)
-        return bmp
     }
 
     // 阶段四：纯文字多轮对话
@@ -379,38 +257,12 @@ class MainActivity : AppCompatActivity() {
         chatContainer.removeAllViews()
     }
 
-    // 统一转成 ARGB_8888，避免格式不符导致读错颜色
-    private fun toArgb(bmp: Bitmap): Bitmap =
-        if (bmp.config == Bitmap.Config.ARGB_8888) bmp
-        else bmp.copy(Bitmap.Config.ARGB_8888, false)
-
     private fun setBusy(b: Boolean) {
         isBusy = b
         safeUi {
-            btnPick.isEnabled = !b
             btnSend.isEnabled = !b
             btnClear.isEnabled = !b
         }
     }
 
-    // 把框和类别名画到图上
-    private fun drawBoxes(bmp: Bitmap, boxes: Array<YoloBox>): Bitmap {
-        val out = bmp.copy(Bitmap.Config.ARGB_8888, true)
-        val canvas = Canvas(out)
-        val boxPaint = Paint().apply {
-            color = Color.RED
-            style = Paint.Style.STROKE
-            strokeWidth = 4f
-        }
-        val textPaint = Paint().apply {
-            color = Color.RED
-            textSize = 36f
-        }
-        for (b in boxes) {
-            canvas.drawRect(b.x1, b.y1, b.x2, b.y2, boxPaint)
-            val name = NativeBridge.cocoLabels.getOrElse(b.label) { "class${b.label}" }
-            canvas.drawText("$name ${String.format(Locale.US, "%.2f", b.score)}", b.x1, b.y1 - 6, textPaint)
-        }
-        return out
-    }
 }

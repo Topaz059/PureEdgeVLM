@@ -11,6 +11,7 @@ import android.view.Gravity
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.FrameLayout
+import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.camera.core.*
@@ -81,7 +82,12 @@ class CameraActivity : AppCompatActivity() {
             setMargins(24, 24, 24, 24)
         }
         frame.addView(btnBack, backLp)
-        setContentView(frame)
+
+        // 三页底部导航（当前页 = 相机）；上面 frame 占满剩余空间，导航栏固定底部
+        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        root.addView(frame, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        root.addView(buildBottomBar(this, "camera"))
+        setContentView(root)
 
         if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
             startCamera()
