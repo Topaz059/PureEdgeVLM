@@ -310,7 +310,7 @@ Java_com_topaz_pureedgevlm_NativeBridge_modelStatus(JNIEnv* env, jclass) {
 // num_threads，所以 OCR 只按"默认/自动"测一次，不扫线程。
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_topaz_pureedgevlm_NativeBridge_benchmarkRun(
-        JNIEnv* env, jclass, jobject bitmap, jstring jcsvPath, jint iterations) {
+        JNIEnv* env, jclass, jobject bitmap, jstring jcsvPath, jint iterations, jint resolution) {
     const char* cp = env->GetStringUTFChars(jcsvPath, nullptr);
     if (!cp) return env->NewStringUTF("csv path null");
     std::string csvPath(cp);
@@ -331,11 +331,15 @@ Java_com_topaz_pureedgevlm_NativeBridge_benchmarkRun(
         unlockBitmap(env, bitmap);
     }
 
-    std::ofstream f(csvPath);
+    // 追加模式：Kotlin 端会为每种分辨率各调一次（调用前先删旧文件），
+    // 这样多次调用拼成一个完整 CSV（含 resolution 列），互不覆盖。
+    std::ofstream f(csvPath, std::ios::app);
     if (!f.is_open()) {
         return env->NewStringUTF(("benchmark: cannot open csv " + csvPath).c_str());
     }
-    f << "model,threads,runs,avg_ms,min_ms,max_ms,fps\n";
+    if (f.tellp() == 0) {  // 仅文件为空时写表头（第一次调用）
+        f << "model,threads,resolution,runs,avg_ms,min_ms,max_ms,fps\n";
+    }
 
     auto timeOne = [&](const std::function<void()>& fn) -> double {
         auto t0 = std::chrono::high_resolution_clock::now();
@@ -343,8 +347,8 @@ Java_com_topaz_pureedgevlm_NativeBridge_benchmarkRun(
         auto t1 = std::chrono::high_resolution_clock::now();
         return std::chrono::duration<double, std::milli>(t1 - t0).count();
     };
-    auto writeRow = [&](const char* model, int t, int runs, double avg, double mn, double mx) {
-        f << model << "," << t << "," << runs << ","
+    auto writeRow = [&](const char* model, int t, int res, int runs, double avg, double mn, double mx) {
+        f << model << "," << t << "," << res << "," << runs << ","
           << avg << "," << mn << "," << mx << "," << (1000.0 / avg) << "\n";
     };
 
@@ -364,7 +368,7 @@ Java_com_topaz_pureedgevlm_NativeBridge_benchmarkRun(
             sum += ms; mn = std::min(mn, ms); mx = std::max(mx, ms);
         }
         double avg = sum / iters;
-        writeRow("yolo", t, iters, avg, mn, mx);
+        writeRow("yolo", t, resolution, iters, avg, mn, mx);
         LOGI("bench yolo t=%d avg=%.1f min=%.1f max=%.1f", t, avg, mn, mx);
     }
 
@@ -378,7 +382,7 @@ Java_com_topaz_pureedgevlm_NativeBridge_benchmarkRun(
             sum += ms; mn = std::min(mn, ms); mx = std::max(mx, ms);
         }
         double avg = sum / iters;
-        writeRow("scene", t, iters, avg, mn, mx);
+        writeRow("scene", t, resolution, iters, avg, mn, mx);
         LOGS("bench scene t=%d avg=%.1f", t, avg);
     }
 
@@ -413,7 +417,7 @@ Java_com_topaz_pureedgevlm_NativeBridge_benchmarkRun(
             sum += ms; mn = std::min(mn, ms); mx = std::max(mx, ms);
         }
         double avg = sum / iters;
-        writeRow("ocr", -1, iters, avg, mn, mx);  // threads=-1 表示"自动"
+        writeRow("ocr", -1, resolution, iters, avg, mn, mx);  // threads=-1 表示"自动"
         LOGO("bench ocr(auto) avg=%.1f", avg);
     }
 
@@ -433,7 +437,7 @@ Java_com_topaz_pureedgevlm_NativeBridge_benchmarkRun(
                 sum += ms; mn = std::min(mn, ms); mx = std::max(mx, ms);
             }
             double avg = sum / llmIters;
-            writeRow("llm", t, llmIters, avg, mn, mx);
+            writeRow("llm", t, resolution, llmIters, avg, mn, mx);
             LOGI("bench llm t=%d avg=%.1f", t, avg);
         }
     } else {
@@ -466,7 +470,7 @@ Java_com_topaz_pureedgevlm_NativeBridge_benchmarkRun(
                 sum += ms; mn = std::min(mn, ms); mx = std::max(mx, ms);
             }
             double avg = sum / pruns;
-            writeRow("pipeline", 4, pruns, avg, mn, mx);
+            writeRow("pipeline", 4, resolution, pruns, avg, mn, mx);
             LOGI("bench pipeline avg=%.1f", avg);
         }
     }

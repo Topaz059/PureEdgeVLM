@@ -8,9 +8,11 @@
 
 说明：
     CSV 由 App 里「跑 Benchmark」按钮生成，列格式为：
-        model,threads,runs,avg_ms,min_ms,max_ms,fps
+        model,threads,resolution,runs,avg_ms,min_ms,max_ms,fps
     其中 threads=-1 表示"自动（不扫线程）"，如 OCR（PP-OCRv5 内部用 OpenCV+OpenMP 并行，
     不响应 NCNN 的 num_threads，所以只测一次默认）。
+    resolution 为输入位图边长（像素），App 会在 224/640/960 三种分辨率下各跑一遍，
+    因此每个模型会出现多行（不同分辨率 × 不同线程）。
 
 产出：
     1) 在终端打印每个模型的延迟对比表；
@@ -21,6 +23,7 @@ import argparse
 import csv
 import os
 import sys
+from collections import defaultdict
 
 # 模型中文名（用于表格展示，更直观）
 MODEL_CN = {
@@ -40,6 +43,7 @@ def load_rows(csv_path):
             rows.append({
                 "model": r["model"].strip(),
                 "threads": int(r["threads"]),
+                "resolution": int(r["resolution"]),
                 "runs": int(r["runs"]),
                 "avg_ms": float(r["avg_ms"]),
                 "min_ms": float(r["min_ms"]),
@@ -64,26 +68,38 @@ def build_markdown(rows):
     lines.append("")
     lines.append("> 测速基线（Baseline）：骁龙 865，纯 CPU 推理（NCNN 关闭 Vulkan；大模型 llama.cpp n_threads 见各表）。后续接入 GPU / Vulkan 后的加速效果将在此基础上对比。")
     lines.append("> 数值为每次模型单独推理的延迟（毫秒），首跑为 warmup 不计入；fps = 1000 / 平均延迟。")
+    lines.append("> 分辨率（resolution）为输入位图边长（像素），本次在 224 / 640 / 960 三档下各测一遍；输入越大，OCR 等直接处理原图的模型延迟越高。")
     lines.append("")
 
     for model in order:
         items = groups[model]
         cn = MODEL_CN.get(model, model)
+        # 每个分辨率下单独找最优线程，用于打 ⭐ 标记
+        by_res = defaultdict(list)
+        for it in items:
+            by_res[it["resolution"]].append(it)
+        best_of = {}
+        for res, lst in by_res.items():
+            best_of[res] = min(lst, key=lambda x: x["avg_ms"])
+
         lines.append("## " + cn)
         lines.append("")
-        # 找最优线程（平均延迟最小；OCR 只有一行自动，也照常显示）
-        best = min(items, key=lambda x: x["avg_ms"])
-        lines.append("| 线程数 | 运行次数 | 平均延迟(ms) | 最小(ms) | 最大(ms) | 速度(fps) |")
-        lines.append("| --- | --- | --- | --- | --- | --- |")
+        lines.append("| 分辨率 | 线程数 | 运行次数 | 平均延迟(ms) | 最小(ms) | 最大(ms) | 速度(fps) |")
+        lines.append("| --- | --- | --- | --- | --- | --- | --- |")
         for it in items:
+            res = "{}×{}".format(it["resolution"], it["resolution"])
             t = "自动" if it["threads"] < 0 else str(it["threads"])
-            mark = " ⭐最优" if it is best else ""
-            lines.append("| {} | {} | {:.1f} | {:.1f} | {:.1f} | {:.2f}{} |".format(
-                t, it["runs"], it["avg_ms"], it["min_ms"], it["max_ms"], it["fps"], mark))
-        best_t = "自动" if best["threads"] < 0 else str(best["threads"])
+            mark = " ⭐最优" if best_of[it["resolution"]] is it else ""
+            lines.append("| {} | {} | {} | {:.1f} | {:.1f} | {:.1f} | {:.2f}{} |".format(
+                res, t, it["runs"], it["avg_ms"], it["min_ms"], it["max_ms"], it["fps"], mark))
+        # 结论：每个分辨率各给一句，沿用旧文档措辞
         lines.append("")
-        lines.append("**结论**：{} 在 **{} 线程** 下平均延迟最低，约 {:.1f} ms（{:.2f} fps）。".format(
-            cn, best_t, best["avg_ms"], best["fps"]))
+        lines.append("**结论**：")
+        for res in sorted(by_res.keys()):
+            best = best_of[res]
+            best_t = "自动" if best["threads"] < 0 else str(best["threads"])
+            lines.append("- 分辨率 {}×{}：{} 在 **{} 线程** 下平均延迟最低，约 {:.1f} ms（{:.2f} fps）。".format(
+                res, res, cn, best_t, best["avg_ms"], best["fps"]))
         lines.append("")
 
     return "\n".join(lines)
