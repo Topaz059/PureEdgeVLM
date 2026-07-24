@@ -145,6 +145,8 @@ int PPOCRv5::load(const char* det_parampath, const char* det_modelpath, const ch
     ppocrv5_det.opt.use_vulkan_compute = use_gpu;
 #endif
 
+    // 并行模式：限制 det 线程数（默认自动=8 会抢核），把算力留给 YOLO 与场景
+    ppocrv5_det.opt.num_threads = 3;
     ppocrv5_det.load_param(det_parampath);
     ppocrv5_det.load_model(det_modelpath);
 
@@ -178,6 +180,8 @@ int PPOCRv5::load(AAssetManager* mgr, const char* det_parampath, const char* det
     ppocrv5_det.opt.use_vulkan_compute = use_gpu;
 #endif
 
+    // 并行模式：限制 det 线程数（默认自动=8 会抢核），把算力留给 YOLO 与场景
+    ppocrv5_det.opt.num_threads = 3;
     ppocrv5_det.load_param(mgr, det_parampath);
     ppocrv5_det.load_model(mgr, det_modelpath);
 
@@ -409,7 +413,7 @@ int PPOCRv5::detect_and_recognize(const cv::Mat& rgb, std::vector<Object>& objec
 {
     detect(rgb, objects);
 
-    #pragma omp parallel for num_threads(ncnn::get_big_cpu_count()) schedule(dynamic)
+    #pragma omp parallel for num_threads(3) schedule(dynamic)
     for (size_t i = 0; i < objects.size(); i++)
     {
         recognize(rgb, objects[i]);

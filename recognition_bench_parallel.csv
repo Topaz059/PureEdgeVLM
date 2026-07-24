@@ -1,0 +1,11 @@
+run,mode,total_ms,yolo_ms,scene_ms,ocr_ms
+1,parallel,334,333,205,291
+2,parallel,335,333,229,281
+3,parallel,309,306,235,258
+4,parallel,329,328,282,250
+5,parallel,336,335,203,249
+6,parallel,379,338,378,285
+7,parallel,357,317,212,356
+8,parallel,320,268,178,317
+9,parallel,274,185,270,273
+10,parallel,342,342,267,312

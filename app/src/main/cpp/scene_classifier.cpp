@@ -10,7 +10,7 @@
 int SceneClassifier::loadFromMemory(const unsigned char* param_mem, size_t param_len,
                                    const unsigned char* bin_mem, size_t bin_len) {
     net.opt.use_vulkan_compute = false; // 纯 CPU
-    net.opt.num_threads = 4;
+    net.opt.num_threads = 1;  // 并行模式：场景识别最轻，给 1 线程，算力让给 YOLO/OCR
 
     // load_param_mem 要求以 \0 结尾，自己拷一份补 \0
     param_buf.resize(param_len + 1);
