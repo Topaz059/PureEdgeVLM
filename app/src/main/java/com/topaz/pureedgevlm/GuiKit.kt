@@ -6,6 +6,7 @@ import android.graphics.drawable.GradientDrawable
 import android.view.Gravity
 import android.view.View
 import android.widget.Button
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 
@@ -162,13 +163,10 @@ fun appBarSettings(ctx: Context, title: String): LinearLayout {
         paint.isFakeBoldText = true
         layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
     }
-    val gear = TextView(ctx).apply {
-        text = "⚙"                       // 齿轮符号
-        textSize = 22f
-        setTextColor(Gui.TEXT2)
-        gravity = Gravity.CENTER
-        setPadding(Gui.dp(ctx, 8f).toInt(), Gui.dp(ctx, 4f).toInt(),
-            Gui.dp(ctx, 8f).toInt(), Gui.dp(ctx, 4f).toInt())
+    val gear = ImageView(ctx).apply {
+        setImageResource(R.drawable.ic_gear)   // 扁平深色齿轮（矢量，非写实银色）
+        val s = Gui.dp(ctx, 22f).toInt()
+        layoutParams = LinearLayout.LayoutParams(s, s)
         // 点齿轮进设置页（仅从 Activity 调用，ctx 必为 Activity，startActivity 安全）
         setOnClickListener { ctx.startActivity(android.content.Intent(ctx, SettingsActivity::class.java)) }
     }

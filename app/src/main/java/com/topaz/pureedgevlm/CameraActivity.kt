@@ -12,6 +12,7 @@ import android.view.Gravity
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
@@ -94,13 +95,18 @@ class CameraActivity : AppCompatActivity() {
         frame.addView(btnBack, backLp)
 
         // 右上角齿轮：进设置页（KV 缓存复用 / 视觉模型并行 两个开关）
-        val gear = TextView(this).apply {
-            text = "⚙"
-            textSize = 22f
-            setTextColor(Color.WHITE)
+        // 相机页是深色主题，齿轮用扁平矢量图标并染白，才在半透明黑圆底上看得清
+        val gear = ImageView(this).apply {
+            setImageResource(R.drawable.ic_gear)
+            val s = (22 * resources.displayMetrics.density).toInt()
+            layoutParams = FrameLayout.LayoutParams(s, s).apply {
+                gravity = Gravity.TOP or Gravity.END
+                setMargins(24, 24, 24, 24)
+            }
             background = roundBg(this@CameraActivity, 100f, 0x80000000.toInt(), null)
             val p = (9 * resources.displayMetrics.density).toInt()
             setPadding(p, p, p, p)
+            drawable?.mutate()?.setTint(Color.WHITE)
             setOnClickListener { startActivity(Intent(this@CameraActivity, SettingsActivity::class.java)) }
         }
         val gearLp = FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
