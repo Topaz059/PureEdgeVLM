@@ -4,6 +4,8 @@
 
     <!-- 相机实时检测页需要相机权限 -->
     <uses-permission android:name="android.permission.CAMERA" />
+    <!-- 语音输入需要麦克风权限 -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />
 
     <application

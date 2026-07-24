@@ -11,7 +11,19 @@ import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.widget.*
+import android.Manifest
+import android.content.pm.PackageManager
+import android.media.AudioFormat
+import android.media.AudioRecord
+import android.media.MediaRecorder
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
+import org.json.JSONObject
+import org.vosk.Model
+import org.vosk.Recognizer
+import java.io.File
+import java.io.FileOutputStream
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 
 @SuppressLint("SetTextI18n")
@@ -19,6 +31,7 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var btnSend: Button
     private lateinit var btnClear: ImageView
+    private lateinit var btnMic: ImageView
     private lateinit var etInput: EditText
     private lateinit var tvStatus: TextView
     private lateinit var chatContainer: LinearLayout
@@ -29,6 +42,15 @@ class MainActivity : AppCompatActivity() {
 
     // 错误处理：Activity 销毁后不再更新 UI，避免崩溃
     private var destroyed = false
+
+    // 语音输入（Vosk 离线识别）相关状态
+    private var voskModel: Model? = null
+    private var recognizer: Recognizer? = null
+    private var audioRecord: AudioRecord? = null
+    private var listeningThread: Thread? = null
+    private var isListening = false
+    private var liveText = ""           // 聆听过程中实时累计的文字
+    private val RECORD_AUDIO_PERM = 1002
 
     // 多轮对话历史：每条是 (是否用户发言, 文本)
     private val history = mutableListOf<Pair<Boolean, String>>()
@@ -87,10 +109,25 @@ class MainActivity : AppCompatActivity() {
             setPadding(p, p, p, p)
         }
 
+        // 语音输入按钮（麦克风）：点一下开始聆听，再点一下停止并把识别文字填入输入框
+        val micSize = (40 * resources.displayMetrics.density).toInt()
+        btnMic = ImageView(this).apply {
+            setImageResource(R.drawable.ic_mic)
+            scaleType = ImageView.ScaleType.CENTER_INSIDE
+            background = roundBg(this@MainActivity, 100f, 0xFFEDEDED.toInt(), null)
+            val p = (9 * resources.displayMetrics.density).toInt()
+            setPadding(p, p, p, p)
+            setOnClickListener { onMicClicked() }
+        }
+
         val inputRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(Gui.dp(this@MainActivity, 12f).toInt(), Gui.dp(this@MainActivity, 10f).toInt(),
                 Gui.dp(this@MainActivity, 12f).toInt(), Gui.dp(this@MainActivity, 12f).toInt())
+            addView(btnMic, LinearLayout.LayoutParams(micSize, micSize).apply {
+                rightMargin = Gui.dp(this@MainActivity, 8f).toInt()
+                gravity = Gravity.CENTER_VERTICAL
+            })   // 麦克风按钮放在输入框左侧
             addView(etInput, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
             addView(btnSend, LinearLayout.LayoutParams(Gui.dp(this@MainActivity, 50f).toInt(), Gui.dp(this@MainActivity, 42f).toInt()).apply {
                 leftMargin = Gui.dp(this@MainActivity, 8f).toInt()
@@ -126,6 +163,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         destroyed = true
+        try { stopListening() } catch (_: Exception) {}
         super.onDestroy()
     }
 
@@ -152,7 +190,194 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // 阶段四：纯文字多轮对话
+    // ───────────────────────── 语音输入（Vosk 离线识别） ─────────────────────────
+
+    // 麦克风按钮：点一下开始聆听，再点一下停止并把文字填入输入框
+    private fun onMicClicked() {
+        if (isListening) { stopListening(); return }
+        if (isBusy) {
+            Toast.makeText(this, "正在生成回复，请稍候", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+            == PackageManager.PERMISSION_GRANTED) {
+            startListening()
+        } else {
+            ActivityCompat.requestPermissions(
+                this, arrayOf(Manifest.permission.RECORD_AUDIO), RECORD_AUDIO_PERM)
+        }
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == RECORD_AUDIO_PERM) {
+            if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) startListening()
+            else Toast.makeText(this, "需要麦克风权限才能使用语音输入", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    // 首次使用时把语音模型从 assets 拷贝到应用私有目录并加载（只做一次，之后复用）
+    private fun ensureModelReady(onReady: () -> Unit) {
+        if (voskModel != null) { onReady(); return }
+        setMicBusy(true)
+        Thread {
+            try {
+                val modelDir = prepareModel()
+                voskModel = Model(modelDir.absolutePath)
+                safeUi {
+                    setMicBusy(false)
+                    onReady()
+                }
+            } catch (e: Exception) {
+                Log.e("VoiceInput", "语音模型加载失败", e)
+                safeUi {
+                    setMicBusy(false)
+                    updateMicUi(false)
+                    Toast.makeText(this, "语音模型加载失败：${e.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }.start()
+    }
+
+    // 从 assets 复制语音模型到 filesDir（避免重复拷贝）
+    private fun prepareModel(): File {
+        val modelName = "vosk-model-small-cn-0.22"
+        if (assets.list(modelName) == null) {
+            throw IllegalStateException("未找到语音模型，请把 vosk-model-small-cn-0.22 文件夹放到 app/src/main/assets/ 下")
+        }
+        val dest = File(filesDir, modelName)
+        if (dest.isDirectory && File(dest, "am").exists()) return dest  // 已拷贝过，跳过
+        dest.deleteRecursively()
+        dest.mkdirs()
+        copyAssetFolder(assets, modelName, dest)
+        return dest
+    }
+
+    // 递归把 assets 里的模型文件夹复制到目标目录
+    private fun copyAssetFolder(am: android.content.res.AssetManager, src: String, dst: File) {
+        val list = am.list(src)
+        if (list == null || list.isEmpty()) {
+            // 是文件：直接复制
+            am.open(src).use { ins ->
+                FileOutputStream(dst).use { outs -> ins.copyTo(outs) }
+            }
+            return
+        }
+        if (!dst.exists()) dst.mkdirs()
+        for (f in list) {
+            copyAssetFolder(am, "$src/$f", File(dst, f))
+        }
+    }
+
+    // 开始聆听：启动离线识别，边说边把文字显示到输入框
+    private fun startListening() {
+        if (isBusy) return
+        ensureModelReady {
+            try {
+                val model = voskModel ?: return@ensureModelReady
+                // 录音前先把输入框里已有的文字记下来，新识别结果接在它后面（多次录音不丢失）
+                val prevText = etInput.text.toString()
+                liveText = ""
+                isListening = true
+                updateMicUi(true)
+                Toast.makeText(this, "聆听中，说完再点麦克风", Toast.LENGTH_SHORT).show()
+                listeningThread = Thread {
+                    var rec: Recognizer? = null
+                    try {
+                        val sampleRate = 16000
+                        val minBuf = AudioRecord.getMinBufferSize(
+                            sampleRate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
+                        val bufSize = if (minBuf > 4096) minBuf else 4096
+                        // 用语音识别专用收音通道（带降噪+自动音量），比普通 MIC 识别更准
+                        val arec = AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION, sampleRate,
+                            AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, bufSize)
+                        audioRecord = arec
+                        arec.startRecording()
+                        rec = Recognizer(model, 16000.0f)
+                        recognizer = rec
+                        val buffer = ByteArray(4096)
+                        while (isListening) {
+                            val n = try { arec.read(buffer, 0, buffer.size) } catch (_: Exception) { -1 }
+                            if (n <= 0) continue
+                            // acceptWaveForm 返回 true 表示一句话结束（取最终结果），否则取中间结果
+                            val json = if (rec.acceptWaveForm(buffer, n)) rec.getResult() else rec.getPartialResult()
+                            val t = parseText(json)
+                            if (t.isNotBlank()) {
+                                liveText = t
+                                safeUi {
+                                    val shown = prevText + t
+                                    etInput.setText(shown)
+                                    etInput.setSelection(shown.length)
+                                }
+                            }
+                        }
+                        // 用户点停止后，取最终定稿文字填入输入框（你确认后再点"发送"）
+                        val finalText = parseText(rec.getFinalResult())
+                        val text = if (finalText.isBlank()) liveText else finalText
+                        if (text.isNotBlank()) safeUi {
+                            val shown = prevText + text
+                            etInput.setText(shown)
+                            etInput.setSelection(shown.length)
+                        }
+                    } catch (e: Exception) {
+                        Log.e("VoiceInput", "聆听线程出错", e)
+                        safeUi { Toast.makeText(this, "语音识别出错：${e.message}", Toast.LENGTH_SHORT).show() }
+                    } finally {
+                        try { audioRecord?.stop() } catch (_: Exception) {}
+                        try { audioRecord?.release() } catch (_: Exception) {}
+                        audioRecord = null
+                        try { rec?.close() } catch (_: Exception) {}
+                        recognizer = null
+                    }
+                }.also { it.start() }
+            } catch (e: Exception) {
+                Log.e("VoiceInput", "启动聆听失败", e)
+                safeUi {
+                    updateMicUi(false)
+                    Toast.makeText(this, "语音启动失败：${e.message}", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
+    // 停止聆听：只负责"通知聆听线程退出"；最终定稿文字与资源释放由聆听线程统一处理
+    // （避免主线程和聆听线程同时操作同一个识别器导致崩溃）
+    private fun stopListening() {
+        if (!isListening && audioRecord == null) return
+        isListening = false
+        updateMicUi(false)
+        listeningThread = null
+    }
+
+    // Vosk 返回的是 JSON：最终结果含 "text" 字段，中间结果含 "partial" 字段
+    // 注意：这里只对"已经识别出的字"做去空格，不改变识别本身（准度由 Vosk 决定）
+    private fun parseText(json: String): String {
+        val raw = try {
+            val obj = JSONObject(json)
+            if (obj.has("text")) obj.getString("text") else obj.optString("partial", "")
+        } catch (_: Exception) { "" }
+        return normalizeText(raw)
+    }
+
+    // 只删空格，不动字：把两个汉字之间的空格删掉（"我 去 学 校"→"我去学校"），
+    // 英文单词之间的空格保留（"我 like 苹果" 不粘一起），首尾空格也清掉
+    private fun normalizeText(s: String): String {
+        val cleaned = s.replace(Regex("(?<=[\u4e00-\u9fff])\\s+(?=[\u4e00-\u9fff])"), "")
+        return cleaned.trim()
+    }
+
+    // 麦克风按钮外观：聆听中=红底白图标，平时=浅灰底深图标（保持圆角）
+    private fun updateMicUi(listening: Boolean) {
+        btnMic.setImageResource(if (listening) R.drawable.ic_mic_on else R.drawable.ic_mic)
+        btnMic.background = roundBg(this@MainActivity, 100f,
+            if (listening) 0xFFE5484D.toInt() else 0xFFEDEDED.toInt(), null)
+    }
+
+    // 模型加载过程中暂时禁用麦克风按钮，避免重复触发
+    private fun setMicBusy(b: Boolean) { btnMic.isEnabled = !b }
+
+    // ───────────────────────── 阶段四：纯文字多轮对话 ─────────────────────────
     private fun sendMessage() {
         val text = etInput.text.toString().trim()
         if (text.isEmpty()) return

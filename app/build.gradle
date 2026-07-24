@@ -72,6 +72,9 @@ dependencies {
     implementation "androidx.camera:camera-lifecycle:1.4.1"
     implementation "androidx.camera:camera-view:1.4.1"
 
+    // 语音输入：Vosk 离线语音识别（完全不联网，把中文语音转成文字）
+    implementation 'com.alphacephei:vosk-android:0.3.47'
+
     testImplementation libs.junit
     androidTestImplementation libs.androidx.espresso.core
     androidTestImplementation libs.androidx.junit
