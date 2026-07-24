@@ -45,6 +45,13 @@ class CameraActivity : AppCompatActivity() {
     private val analyzerExecutor = Executors.newSingleThreadExecutor()
     private val inferenceExecutor = Executors.newSingleThreadExecutor()
 
+    // 场景结果缓存：相机预览连续帧场景通常不变，短时间内复用上次结果，
+    // 跳过重复的场景识别推理。YOLO 仍每帧检测（框要实时），仅场景被节流，零精度损失。
+    // 推理块在单线程 inferenceExecutor 内串行执行，缓存变量只在单线程内访问，无并发冲突。
+    private var lastScenes: Array<SceneResult>? = null
+    private var lastSceneTime: Long = 0L
+    private val SCENE_CACHE_MS = 500L // 场景标签至少每 500 毫秒刷新一次
+
     // 运行时申请相机权限
     private val requestPermission = registerForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
@@ -172,7 +179,17 @@ class CameraActivity : AppCompatActivity() {
                 val argb = toArgb(bitmap)
                 // 相机实时用较低置信度阈值，避免漏检（和视觉管线一致用 0.2）
                 val boxes = NativeBridge.yoloDetect(argb, 0.2f, 0.45f)
-                val scenes = NativeBridge.sceneRecognize(argb)
+                // 场景识别结果缓存：距上次识别不到 SCENE_CACHE_MS 就复用，不重复推理
+                val now = System.currentTimeMillis()
+                val sceneCached = (lastScenes != null && now - lastSceneTime < SCENE_CACHE_MS)
+                val scenes = if (sceneCached) {
+                    lastScenes!!
+                } else {
+                    val s = NativeBridge.sceneRecognize(argb)
+                    lastScenes = s
+                    lastSceneTime = now
+                    s
+                }
                 if (argb != bitmap) argb.recycle()
                 val sceneText = if (scenes.isEmpty()) {
                     "（场景未加载）"
@@ -188,7 +205,7 @@ class CameraActivity : AppCompatActivity() {
                     "$name(${String.format(Locale.US, "%.2f", b.score)})"
                 }
                 // 相机模式不跑 OCR（实时场景用不上，且又慢又闪）
-                Log.d(TAG, "frame boxes=${boxes.size} scenes=${scenes.size} detected=[$boxText]")
+                Log.d(TAG, "frame boxes=${boxes.size} scenes=${scenes.size}${if (sceneCached) " [scene cache hit]" else ""} detected=[$boxText]")
                 runOnUiThread {
                     overlay.setBoxes(boxes, bw, bh)
                     tvInfo.text = "场景: $sceneText"
