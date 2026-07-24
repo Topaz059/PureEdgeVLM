@@ -39,6 +39,8 @@ object NativeBridge {
     external fun llmGenerate(prompt: String, maxTokens: Int, callback: LlmCallback)
     // 设置思维链开关：true=先想后答（默认），false=直接出答案（关思维链）
     external fun llmSetThinking(enabled: Boolean)
+    // 设置 KV 缓存复用开关：true=聊天复用常驻上下文（默认），false=每轮整段重算
+    external fun llmSetKvReuse(enabled: Boolean)
 
     // ===== 阶段五 Benchmark =====
     // 对四个模型按线程 1/2/4/8 各跑 iterations 次测速，结果写进 csvPath（CSV 文件）。

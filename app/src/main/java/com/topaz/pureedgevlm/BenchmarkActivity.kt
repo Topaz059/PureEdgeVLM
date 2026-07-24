@@ -29,7 +29,7 @@ class BenchmarkActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        val topBar = appBar(this, "性能测试", "")
+        val topBar = appBarSettings(this, "性能测试")
 
         val (infoCard, info) = sectionCard(this, "说明")
         tvInfo = info

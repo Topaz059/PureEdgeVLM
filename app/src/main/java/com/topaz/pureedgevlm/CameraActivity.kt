@@ -1,6 +1,7 @@
 package com.topaz.pureedgevlm
 
 import android.annotation.SuppressLint
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Color
@@ -91,6 +92,22 @@ class CameraActivity : AppCompatActivity() {
             setMargins(24, 24, 24, 24)
         }
         frame.addView(btnBack, backLp)
+
+        // 右上角齿轮：进设置页（KV 缓存复用 / 视觉模型并行 两个开关）
+        val gear = TextView(this).apply {
+            text = "⚙"
+            textSize = 22f
+            setTextColor(Color.WHITE)
+            background = roundBg(this@CameraActivity, 100f, 0x80000000.toInt(), null)
+            val p = (9 * resources.displayMetrics.density).toInt()
+            setPadding(p, p, p, p)
+            setOnClickListener { startActivity(Intent(this@CameraActivity, SettingsActivity::class.java)) }
+        }
+        val gearLp = FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            gravity = Gravity.TOP or Gravity.END
+            setMargins(24, 24, 24, 24)
+        }
+        frame.addView(gear, gearLp)
 
         // 三页底部导航（当前页 = 相机）；上面 frame 占满剩余空间，导航栏固定底部
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }

@@ -39,6 +39,10 @@
         <activity
             android:name=".ImageActivity"
             android:exported="false" />
+        <!-- 设置页：右上角齿轮入口进入，含 KV 缓存复用 / 视觉模型并行 两个开关 -->
+        <activity
+            android:name=".SettingsActivity"
+            android:exported="false" />
     </application>
 
 </manifest>

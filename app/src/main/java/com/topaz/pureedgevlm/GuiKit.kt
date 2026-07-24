@@ -144,3 +144,45 @@ fun appBar(ctx: Context, title: String, subtitle: String): LinearLayout {
     })
     return bar
 }
+
+// 带设置入口的标题栏：标题靠左，右上角一个齿轮（⚙），点一下进设置页。
+// 与 appBar 同高同风格（白底 + 底部细线），仅多了一个右侧齿轮。
+fun appBarSettings(ctx: Context, title: String): LinearLayout {
+    val row = LinearLayout(ctx).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        setBackgroundColor(Gui.SURFACE)
+        setPadding(Gui.dp(ctx, 18f).toInt(), Gui.dp(ctx, 16f).toInt(),
+            Gui.dp(ctx, 14f).toInt(), Gui.dp(ctx, 8f).toInt())
+    }
+    val t = TextView(ctx).apply {
+        this.text = title
+        textSize = 18f
+        setTextColor(Gui.TEXT)
+        paint.isFakeBoldText = true
+        layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+    }
+    val gear = TextView(ctx).apply {
+        text = "⚙"                       // 齿轮符号
+        textSize = 22f
+        setTextColor(Gui.TEXT2)
+        gravity = Gravity.CENTER
+        setPadding(Gui.dp(ctx, 8f).toInt(), Gui.dp(ctx, 4f).toInt(),
+            Gui.dp(ctx, 8f).toInt(), Gui.dp(ctx, 4f).toInt())
+        // 点齿轮进设置页（仅从 Activity 调用，ctx 必为 Activity，startActivity 安全）
+        setOnClickListener { ctx.startActivity(android.content.Intent(ctx, SettingsActivity::class.java)) }
+    }
+    row.addView(t)
+    row.addView(gear)
+
+    val bar = LinearLayout(ctx).apply {
+        orientation = LinearLayout.VERTICAL
+        setBackgroundColor(Gui.SURFACE)
+    }
+    bar.addView(row)
+    val line = android.view.View(ctx).apply { setBackgroundColor(Gui.BORDER) }
+    bar.addView(line, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 1).apply {
+        topMargin = Gui.dp(ctx, 8f).toInt()
+    })
+    return bar
+}

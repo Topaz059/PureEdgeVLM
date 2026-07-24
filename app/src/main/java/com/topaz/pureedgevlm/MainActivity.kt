@@ -65,7 +65,7 @@ class MainActivity : AppCompatActivity() {
         NativeBridge.init(this)
 
         // 顶部标题栏（功能名 + 一句说明）
-        val topBar = appBar(this, "本地对话", "")
+        val topBar = appBarSettings(this, "本地对话")
 
         // 模型缺失提示（平时隐藏，仅缺模型时显示一行小字）
         tvStatus = TextView(this).apply {
@@ -404,6 +404,7 @@ class MainActivity : AppCompatActivity() {
                 // 3) 用 MiniCPM5 的 ChatML 模板拼成「完整多轮对话」再喂给模型
                 val prompt = buildChatPrompt(history)
                 NativeBridge.llmSetThinking(ENABLE_THINKING)
+                NativeBridge.llmSetKvReuse(Settings.kvReuse(this@MainActivity))
                 if (!NativeBridge.ensureLlmLoaded(this@MainActivity)) {
                     safeUi {
                         replaceThinkingWithText(thinking, "（大模型加载失败，请看 Logcat tag=LLM）")
@@ -440,8 +441,12 @@ class MainActivity : AppCompatActivity() {
                     }
                 })
 
-                // 5) 只把"正式回答"（剥离思考过程）存进历史，下一轮对话才能"记得上文"
-                val reply = displayFor(rawSb.toString()).trim()
+                // 5) 存进历史的是「模型原始输出」——不做 trim、也不做 displayFor 剥离。
+                //    原因：KV 缓存里记的是原始输出的词元序列（genVec），第二轮重新分词历史回答时，
+                //    必须和 genVec 逐词一致公共前缀才对得上；若这里 trim 掉首尾空格（模型首个词常带
+                //    前导空格，如 "▁Hello"），re-tokenize 会和缓存错位 → 多轮空答。显示层仍用
+                //    displayFor 剥离思考过程（见 onToken），但入库的"原始文本"必须保真。
+                val reply = rawSb.toString()
                 safeUi {
                     if (firstToken) {
                         // 一个字都没出（异常/空回复）：把思考气泡换成提示文字
@@ -473,7 +478,13 @@ class MainActivity : AppCompatActivity() {
         sb.append("<|im_start|>system\n你是运行在手机上的本地智能助手。我们现在是日常闲聊，不是考试也不是评测。请用轻松、口语化、简洁的简体中文回答，像朋友聊天一样自然；不要生硬地列要点，更不要说“你在测试我”之类的话。不要输出任何思考过程，不要使用 <think> 标签，直接给出最终回答。<|im_end|>\n")
         for ((isUser, t) in hist) {
             val role = if (isUser) "user" else "assistant"
-            sb.append("<|im_start|>$role\n$t<|im_end|>\n")
+            sb.append("<|im_start|>$role\n")
+            // 关思维链：每条历史 assistant 也要带空思考块，且必须和"首轮跑进 KV 缓存的写法"
+            // 完全一致——首轮 prompt 在 assistant 前缀后塞了 <think>\n\n</think>\n\n，模型也把它算进了
+            // KV 缓存；若这里历史回答前不补同样一块，第二轮算公共前缀会在 assistant 处错位
+            // （缓存里是 <think>+回答，prompt 里却是 回答），导致多轮空答。当前轮（下面的末尾）同理。
+            if (!isUser && !ENABLE_THINKING) sb.append("<think>\n\n</think>\n\n")
+            sb.append("$t<|im_end|>\n")
         }
         sb.append("<|im_start|>assistant\n")
         // 关思维链：assistant 前缀后塞一个空思考块，等于告诉模型"你想完了，直接答"

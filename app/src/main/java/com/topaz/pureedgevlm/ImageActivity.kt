@@ -30,8 +30,11 @@ class ImageActivity : AppCompatActivity() {
     private lateinit var ocrTv: TextView
     private lateinit var btnMode: Button
     private lateinit var btnBatch: Button
-    // 流水线模式：true=三模型并行，false=串行。单张识别与批量测速都按它走
-    private var pipelineParallel = true
+    // 流水线模式：true=三模型并行，false=串行。单张识别与批量测速都按它走。
+    // 走 Settings（设置页开关持久化）；页内 btnMode 也读写同一份，二者自动同步。
+    private var pipelineParallel: Boolean
+        get() = Settings.pipelineParallel(this@ImageActivity)
+        set(v) = Settings.setPipelineParallel(this@ImageActivity, v)
 
     // 防止连点导致并发推理
     @Volatile private var isBusy = false
@@ -56,7 +59,7 @@ class ImageActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         NativeBridge.init(this)
 
-        val topBar = appBar(this, "视觉识别", "")
+        val topBar = appBarSettings(this, "视觉识别")
 
         tvStatus = TextView(this).apply {
             textSize = 13f
@@ -80,9 +83,9 @@ class ImageActivity : AppCompatActivity() {
         btnPick = primaryButton(this, "选择图片（检测 / 场景 / OCR）")
         btnPick.setOnClickListener { if (!isBusy) pickImage.launch("image/*") }
 
-        // 串行/并行 模式开关（单张识别与批量测速都按它走）
+        // 串行/并行 模式开关（单张识别与批量测速都按它走）；与设置页开关共用 Settings，自动同步
         btnMode = Button(this).apply {
-            text = "模式：并行"
+            text = if (pipelineParallel) "模式：并行" else "模式：串行"
             setOnClickListener {
                 pipelineParallel = !pipelineParallel
                 text = if (pipelineParallel) "模式：并行" else "模式：串行"

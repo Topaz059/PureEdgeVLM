@@ -279,6 +279,13 @@ Java_com_topaz_pureedgevlm_NativeBridge_llmSetThinking(
     g_llm.setThinkingEnabled(enabled);
 }
 
+// 设置 KV 缓存复用开关：enabled=true 复用常驻上下文（默认），false=每轮整段重算
+extern "C" JNIEXPORT void JNICALL
+Java_com_topaz_pureedgevlm_NativeBridge_llmSetKvReuse(
+        JNIEnv*, jobject, jboolean enabled) {
+    g_llm.setKvReuse(enabled);
+}
+
 // 返回初始化 + 检测两段调试信息，供 Kotlin 显示在界面上
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_topaz_pureedgevlm_NativeBridge_getDebug(JNIEnv* env, jclass) {
@@ -433,13 +440,13 @@ Java_com_topaz_pureedgevlm_NativeBridge_benchmarkRun(
     if (g_llm.isLoaded()) {
         const int llmMax = 48;  // 短输出，控制单次测速时长
         g_llm.setNumThreads(4);
-        g_llm.generate(llmPrompt, llmMax, [](const std::string&){});  // warmup
+        g_llm.generate(llmPrompt, llmMax, [](const std::string&){}, false);  // warmup（不复用缓存，保证测速干净）
         for (int t : threadsList) {
             g_llm.setNumThreads(t);
             double sum = 0, mn = 1e30, mx = 0;
             for (int i = 0; i < llmIters; i++) {
                 double ms = timeOne([&]() {
-                    g_llm.generate(llmPrompt, llmMax, [](const std::string&){});
+                    g_llm.generate(llmPrompt, llmMax, [](const std::string&){}, false);
                 });
                 sum += ms; mn = std::min(mn, ms); mx = std::max(mx, ms);
             }
