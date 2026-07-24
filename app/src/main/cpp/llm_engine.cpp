@@ -155,8 +155,8 @@ std::string LlmEngine::generate(const std::string& prompt, int maxTokens,
 
     // 双段软上限：思考与回答各占一块，保证答案一定能生成（防"说一半就停"）
     const int MAX_THINK_TOKENS  = 768;   // 思考阶段最多生成的词元数（第三轮实测"你有什么功能"思考就超了 256，给 3 倍余量）
-    const int MAX_ANSWER_TOKENS = 400;   // 回答阶段最多生成的词元数（保证答案一定能拿到足额词元）
-    bool seenThinkEnd = false;           // 是否已遇到 </think>
+    const int MAX_ANSWER_TOKENS = thinking_enabled ? 400 : 1024;  // 关思维链后答案预算放大，长回答不被截断
+    bool seenThinkEnd = !thinking_enabled;   // 关思维链=已"想完"，生成直接进答案段，不再给思考段留预算
     int  thinkTok = 0;
     int  answerTok = 0;
 

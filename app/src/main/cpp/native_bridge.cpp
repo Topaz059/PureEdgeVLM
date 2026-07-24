@@ -272,6 +272,13 @@ Java_com_topaz_pureedgevlm_NativeBridge_llmGenerate(
     env->DeleteLocalRef(cbClass);
 }
 
+// 设置大模型思维链开关：enabled=true 开（默认，先想后答），false=关（直接出答案）
+extern "C" JNIEXPORT void JNICALL
+Java_com_topaz_pureedgevlm_NativeBridge_llmSetThinking(
+        JNIEnv*, jobject, jboolean enabled) {
+    g_llm.setThinkingEnabled(enabled);
+}
+
 // 返回初始化 + 检测两段调试信息，供 Kotlin 显示在界面上
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_topaz_pureedgevlm_NativeBridge_getDebug(JNIEnv* env, jclass) {

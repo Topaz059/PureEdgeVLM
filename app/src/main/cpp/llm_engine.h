@@ -27,12 +27,17 @@ public:
     // 设置推理线程数（Benchmark 用），范围 1~8；默认 4（骁龙865 大核簇=4）
     void setNumThreads(int n) { if (n > 0) n_threads = n; }
 
+    // 思维链开关：true=模型先吐 <think>...</think> 再答（默认）；
+    // false=直接出答案（关掉后 C++ 不再给"思考段"预留 token 预算，并把答案预算放大）。
+    void setThinkingEnabled(bool b) { thinking_enabled = b; }
+
 private:
     struct llama_model*        model = nullptr;
     const struct llama_vocab*  vocab = nullptr;
     mutable std::mutex         mtx;
     int                        n_threads = 4;
     bool                       loaded = false;
+    bool                       thinking_enabled = true;   // 默认开思维链；关掉=直接答
 };
 
 // 全局单例（native_bridge.cpp 与 llm_engine.cpp 共用）

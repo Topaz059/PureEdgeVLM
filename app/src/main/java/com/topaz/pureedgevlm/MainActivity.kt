@@ -403,6 +403,7 @@ class MainActivity : AppCompatActivity() {
             try {
                 // 3) 用 MiniCPM5 的 ChatML 模板拼成「完整多轮对话」再喂给模型
                 val prompt = buildChatPrompt(history)
+                NativeBridge.llmSetThinking(ENABLE_THINKING)
                 if (!NativeBridge.ensureLlmLoaded(this@MainActivity)) {
                     safeUi {
                         replaceThinkingWithText(thinking, "（大模型加载失败，请看 Logcat tag=LLM）")
@@ -412,9 +413,9 @@ class MainActivity : AppCompatActivity() {
                 }
 
                 // 4) 生成，逐字回调（打字机效果，直接更新文字，无闪烁光标）
-                //    模型会吐 <think>...</think> 思考链：生成途中界面显示"思考过程"让用户能看着它想；
-                //    一旦出现 </think>，界面只显示正式回答（去掉开头空行）；存进历史的也只保留正式回答，
-                //    下一轮才不会把思考内容又喂回模型（否则历史会再次膨胀）。
+                //    思维链由 ENABLE_THINKING 控制：开时模型吐 <think>...</think>，
+                //    界面显示"思考过程"，出现 </think> 后只留正式回答；关时直接出答案。
+                //    无论开/关，存进历史的都只保留正式回答，下一轮才不会把多余内容喂回模型。
                 val rawSb = StringBuilder()
                 var aiBubble: TextView? = null
                 var firstToken = true
@@ -462,6 +463,9 @@ class MainActivity : AppCompatActivity() {
         }.start()
     }
 
+    // 思维链总开关：true=先想后答（默认行为）；false=关掉，模型直接出答案（更快更干净）
+    private val ENABLE_THINKING = false
+
     // 用 MiniCPM5 的 ChatML 模板拼装完整多轮对话：
     // system 系统设定 + 每一轮 user/assistant + 末尾的 assistant 前缀（不含 <|im_end|>）。
     private fun buildChatPrompt(hist: List<Pair<Boolean, String>>): String {
@@ -472,6 +476,9 @@ class MainActivity : AppCompatActivity() {
             sb.append("<|im_start|>$role\n$t<|im_end|>\n")
         }
         sb.append("<|im_start|>assistant\n")
+        // 关思维链：assistant 前缀后塞一个空思考块，等于告诉模型"你想完了，直接答"
+        // （这正是 MiniCPM5 模板在 enable_thinking=false 时生成的写法）
+        if (!ENABLE_THINKING) sb.append("<think>\n\n</think>\n\n")
         return sb.toString()
     }
 
@@ -520,6 +527,8 @@ class MainActivity : AppCompatActivity() {
     private fun makeBubble(isUser: Boolean): TextView {
         val tv = TextView(this)
         val pad = (10 * resources.displayMetrics.density).toInt()
+        // 气泡最大占屏宽 70%，另一侧留 30% 空白：短消息按内容收缩，长消息最多到 70% 自动换行
+        val sideReserve = (resources.displayMetrics.widthPixels * 0.30).toInt()
         val lp = LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
         lp.setMargins(0, 6, 0, 6)
@@ -529,13 +538,15 @@ class MainActivity : AppCompatActivity() {
             tv.background = bubbleBg(true)   // 品牌蓝圆角气泡
             tv.gravity = Gravity.END
             lp.gravity = Gravity.END
+            lp.leftMargin = sideReserve     // 左侧留 30%，气泡靠右占 70%
         } else {
-            // 大模型回复也用蓝色气泡，长相与右侧用户蓝气泡保持一致（仅左对齐区分）
+            // 大模型回复：浅蓝灰气泡 + 深色文字，和用户蓝气泡明显区分，且与浅色聊天背景协调
             tv.setPadding(pad, pad, pad, pad)
-            tv.setTextColor(Color.WHITE)
-            tv.background = bubbleBg(true)
+            tv.setTextColor(0xFF2B2F38.toInt())   // 深石板色，柔和不刺眼
+            tv.background = bubbleBg(false)        // 复用"思考中"小圆点同款浅色底，整体协调
             tv.gravity = Gravity.START
             lp.gravity = Gravity.START
+            lp.rightMargin = sideReserve    // 右侧留 30%，气泡靠左占 70%
         }
         tv.layoutParams = lp
         return tv
